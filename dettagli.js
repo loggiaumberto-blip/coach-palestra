@@ -1,0 +1,121 @@
+/* Coach Palestra – dettagli per «Come si fa»: regolazioni, muscoli (zone del corpo),
+   dove NON deve fare male, gruppo muscolare per le statistiche, disegni da mostrare. */
+SCHEDA.dettagli = {
+  squat: { gruppo: 'Gambe', anim: ['squat'], muscoli: ['coscia', 'gluteo', 'addome', 'lombare'],
+    regola: ['Rack: il bilanciere all\'altezza delle ascelle, così esci senza alzarti sulle punte.', 'Sicure (barre di sicurezza) poco sotto il punto più basso del tuo squat.', 'Fermi ai lati del bilanciere, sempre.'],
+    infortuni: [
+      { zone: ['ginocchio'], testo: 'Dolore dentro o davanti al ginocchio: di solito le ginocchia cadono verso l\'interno o il peso è troppo. Spingi le ginocchia in fuori, nella direzione delle punte, e scala il peso.' },
+      { zone: ['lombare'], testo: 'Dolore pungente in basso alla schiena (non la stanchezza dei muscoli): la schiena si arrotonda in fondo o non stringi l\'addome. Scendi meno e gonfia bene la pancia prima di ogni ripetizione.' },
+      { zone: ['anca'], testo: 'Pizzico davanti all\'anca quando sei giù: prova i piedi un po\' più larghi e le punte più in fuori.' },
+      { zone: ['spalla', 'mano'], testo: 'Dolore a spalle o polsi per tenere il bilanciere: allarga la presa e tieni i polsi dritti. Il peso lo regge la schiena, non le mani.' }] },
+  panca30: { gruppo: 'Petto', anim: ['panca30'], muscoli: ['petto', 'spalla', 'tricipite'],
+    regola: ['Schienale a 30°: 2–3 tacche sopra la posizione piana.', 'Sedile regolato in modo che il sedere non scivoli in avanti.'],
+    infortuni: [
+      { zone: ['spalla'], testo: 'Dolore davanti alla spalla: gomiti troppo larghi (a T) o discesa troppo profonda. Gomiti a 45° dal busto e scendi solo finché senti allungare il petto.' },
+      { zone: ['gomito', 'mano'], testo: 'Dolore a gomito o polso: polsi piegati all\'indietro. Tieni il polso dritto sopra il gomito.' }] },
+  dips: { gruppo: 'Petto', anim: ['dips'], muscoli: ['petto', 'tricipite', 'spalla'],
+    regola: ['Elastico agganciato bene alle due parallele, ginocchia dentro. Con la macchina assistita: più peso = più aiuto.', 'Se le parallele si regolano: larghe poco più delle spalle.'],
+    infortuni: [
+      { zone: ['spalla'], testo: 'Dolore davanti o dentro la spalla: stai scendendo troppo. Fermati con il braccio parallelo al pavimento. Se continua, per oggi passa alla panca piana (tasto «Fa male?»).' },
+      { zone: ['petto'], testo: 'Fitta allo sterno, in mezzo al petto: scendi meno e più lento.' },
+      { zone: ['gomito'], testo: 'Dolore al gomito: non bloccare di colpo in alto e non lasciarti cadere giù.' }] },
+  affondi: { gruppo: 'Gambe', anim: ['affondi'], muscoli: ['coscia', 'gluteo'],
+    regola: ['Almeno 2 metri liberi davanti a te.', 'Manubri che tieni senza che la presa ceda prima delle gambe.'],
+    infortuni: [
+      { zone: ['ginocchio'], testo: 'Dolore davanti al ginocchio della gamba avanti: passo troppo corto o ginocchio che va in dentro. Allunga il passo e tieni il ginocchio sopra il piede.' },
+      { zone: ['anca'], testo: 'Fastidio all\'inguine della gamba dietro: passo troppo lungo o busto che si piega. Accorcia un po\' e resta dritto.' }] },
+  legext: { gruppo: 'Gambe', anim: ['legext'], muscoli: ['coscia'],
+    regola: ['Schienale: il ginocchio deve stare in linea con il perno, cioè il punto in cui ruota la macchina.', 'Rullo appena sopra la caviglia.', 'Il peso si sceglie con il perno nella colonna dei pesi.'],
+    infortuni: [{ zone: ['ginocchio'], testo: 'Dolore sotto la rotula o dentro il ginocchio: perno non allineato o peso troppo alto. Sistema lo schienale e scala; puoi anche non distendere del tutto.' }] },
+  polpacci: { gruppo: 'Polpacci', anim: ['polpacci'], muscoli: ['polpaccio'],
+    regola: ['Schienale come per la leg press normale.', 'Sulla pedana solo la parte davanti del piede, sul bordo basso.', 'Togli le sicure solo con i piedi stabili e rimettile alla fine.'],
+    infortuni: [
+      { zone: ['achille'], testo: 'Dolore al tendine d\'Achille (dietro la caviglia): rimbalzi in basso o carico troppo. Scendi lento e usa meno peso.' },
+      { zone: ['piede'], testo: 'Crampo sotto il piede: alleggerisci e muovi le dita tra una serie e l\'altra.' },
+      { zone: ['ginocchio'], testo: 'Dolore dietro il ginocchio: lo stai bloccando. Tienilo appena morbido.' }] },
+  addomeA: { gruppo: 'Addome', anim: ['crunch', 'plank'], muscoli: ['addome'],
+    regola: ['Un tappetino a terra.'],
+    infortuni: [
+      { zone: ['collo'], testo: 'Dolore al collo nel crunch: stai tirando la testa con le mani. Mani leggere alle tempie, sguardo al soffitto.' },
+      { zone: ['lombare'], testo: 'Dolore in basso alla schiena nel plank: la pancia cede verso il basso. Stringi glutei e addome, oppure fai il plank sulle ginocchia.' }] },
+  trapbar: { gruppo: 'Gambe', anim: ['trapbar'], muscoli: ['coscia', 'gluteo', 'femorale', 'lombare', 'trapezio'],
+    regola: ['Dischi uguali sui due lati. Se la trap bar ha le maniglie alte, all\'inizio usa quelle (più facile).', 'Piedi al centro esatto: le maniglie in linea con la metà dei piedi.'],
+    infortuni: [
+      { zone: ['lombare'], testo: 'Dolore pungente in basso alla schiena: la schiena si arrotonda alla partenza. Petto alto e pancia stretta prima di tirare; se serve, scala.' },
+      { zone: ['ginocchio'], testo: 'Dolore al ginocchio: le ginocchia cadono in dentro. Spingile leggermente in fuori.' },
+      { zone: ['mano'], testo: 'Dolore al polso: polsi dritti, le braccia sono solo ganci.' }] },
+  rematore: { gruppo: 'Schiena', anim: ['rematore'], muscoli: ['dorsale', 'braccio', 'spalla'],
+    regola: ['Prendi il bilanciere da un rack all\'altezza delle cosce, così non lo sollevi da terra ogni volta.'],
+    infortuni: [
+      { zone: ['lombare'], testo: 'Dolore in basso alla schiena: il busto si alza e si abbassa a ogni ripetizione, o il peso è troppo. Busto fermo; se la schiena si stanca prima dei dorsali, scala.' },
+      { zone: ['gomito'], testo: 'Dolore all\'interno del gomito: stai tirando di braccia. Pensa a portare i gomiti indietro.' },
+      { zone: ['spalla'], testo: 'Pizzico davanti alla spalla: non tirare oltre il busto, fermati con il bilanciere all\'ombelico.' }] },
+  rumeni: { gruppo: 'Femorali', anim: ['rumeni'], muscoli: ['femorale', 'gluteo', 'lombare'],
+    regola: ['Prendi il bilanciere da un rack all\'altezza delle cosce.'],
+    infortuni: [
+      { zone: ['lombare'], testo: 'Dolore in basso alla schiena: la schiena si arrotonda per scendere di più. Fermati quando senti tirare i femorali.' },
+      { zone: ['femorale'], testo: 'Fitta improvvisa dietro la coscia (diversa dal normale «tirare»): fermati subito, potrebbe essere uno stiramento.' }] },
+  trazioni: { gruppo: 'Schiena', anim: ['trazioni'], muscoli: ['dorsale', 'braccio', 'avambraccio'],
+    regola: ['Elastico annodato alla sbarra (nodo a bocca di lupo): tiralo per controllare che tenga.', 'Usa uno sgabello per salire e infilare il ginocchio nell\'elastico.'],
+    infortuni: [
+      { zone: ['spalla'], testo: 'Dolore dentro la spalla in basso: sei appeso con le spalle molli. Prima di tirare abbassa le spalle (spalle attive).' },
+      { zone: ['gomito'], testo: 'Dolore al gomito: non distendere di colpo in basso, scendi controllato.' },
+      { zone: ['trapezio'], testo: 'Tensione al collo: non allungare il mento verso la sbarra, porta su il petto.' }] },
+  trx: { gruppo: 'Schiena', anim: ['trx'], muscoli: ['dorsale', 'braccio', 'spalla'],
+    regola: ['Cinghie alla stessa lunghezza.', 'Più i piedi sono vicini al punto di aggancio, più è difficile.'],
+    infortuni: [
+      { zone: ['lombare'], testo: 'Dolore in basso alla schiena: il sedere cade. Stringi glutei e addome, corpo a tavola.' },
+      { zone: ['spalla'], testo: 'Fastidio davanti alla spalla: non portare i gomiti troppo oltre il busto.' }] },
+  legcurl: { gruppo: 'Femorali', anim: ['legcurl'], muscoli: ['femorale', 'polpaccio'],
+    regola: ['Ginocchio in linea con il perno della macchina.', 'Rullo appena sopra il tallone.'],
+    infortuni: [
+      { zone: ['lombare'], testo: 'Dolore in basso alla schiena: il bacino si alza. Tieni la pancia giù e usa meno peso.' },
+      { zone: ['femorale'], testo: 'Crampo dietro la coscia: capita. Distendi la gamba, aspetta e riprendi con meno peso.' },
+      { zone: ['ginocchio'], testo: 'Dolore al ginocchio: rullo mal messo o perno non allineato.' }] },
+  addomeB: { gruppo: 'Addome', anim: ['ginocchia', 'plank'], muscoli: ['addome', 'avambraccio'],
+    regola: ['Sbarra delle trazioni; se non ci arrivi usa uno sgabello.'],
+    infortuni: [
+      { zone: ['lombare'], testo: 'Dolore in basso alla schiena: dondoli o lasci cadere le gambe. Movimento lento, ginocchia più piegate.' },
+      { zone: ['spalla'], testo: 'Dolore alle spalle stando appeso: tienile attive, tirate giù.' },
+      { zone: ['anca'], testo: 'Fastidio all\'inguine: porta su le ginocchia un po\' meno.' }] },
+  military: { gruppo: 'Spalle', anim: ['military'], muscoli: ['spalla', 'tricipite', 'petto'],
+    regola: ['Rack: bilanciere all\'altezza delle clavicole.', 'Se il bilanciere da 20 kg è troppo, usa un bilanciere leggero o i manubri.'],
+    infortuni: [
+      { zone: ['lombare'], testo: 'Dolore in basso alla schiena: ti stai inarcando. Stringi glutei e addome e scala il peso.' },
+      { zone: ['spalla'], testo: 'Dolore dentro la spalla in alto: il bilanciere va avanti. Spingi in verticale e porta la testa avanti quando passa la fronte.' },
+      { zone: ['mano'], testo: 'Dolore ai polsi: polsi dritti sopra i gomiti, bilanciere sulla parte bassa del palmo.' }] },
+  shoulderpress: { gruppo: 'Spalle', anim: ['shoulderpress'], muscoli: ['spalla', 'tricipite'],
+    regola: ['Schienale verticale o quasi.', 'Sedile in modo che spalle e schiena stiano appoggiate.'],
+    infortuni: [
+      { zone: ['spalla'], testo: 'Dolore dentro la spalla: gomiti troppo indietro o discesa troppo bassa. Gomiti un po\' avanti, scendi fino alle orecchie.' },
+      { zone: ['lombare'], testo: 'La schiena si stacca dallo schienale: il peso è troppo.' }] },
+  alzate: { gruppo: 'Spalle', anim: ['alzate'], muscoli: ['spalla'],
+    regola: ['Manubri leggeri: qui conta il controllo.'],
+    infortuni: [
+      { zone: ['spalla'], testo: 'Pizzico in cima alla spalla quando sei in alto: sali solo fino all\'altezza delle spalle.' },
+      { zone: ['trapezio'], testo: 'Lavora soprattutto il collo: stai alzando le spalle. Spalle basse e peso più leggero.' }] },
+  chinup: { gruppo: 'Schiena', anim: ['chinup'], muscoli: ['dorsale', 'braccio', 'avambraccio'],
+    regola: ['Elastico annodato alla sbarra: tiralo per controllare che tenga.', 'Sgabello per salire e infilare il ginocchio.'],
+    infortuni: [
+      { zone: ['gomito', 'braccio'], testo: 'Dolore all\'interno del gomito o al bicipite vicino al gomito: non distendere di colpo in basso. Se continua, per oggi torna al curl al cavo.' },
+      { zone: ['spalla'], testo: 'Dolore dentro la spalla: spalle attive prima di tirare.' }] },
+  pushdown: { gruppo: 'Braccia', anim: ['pushdown'], muscoli: ['tricipite'],
+    regola: ['Cavo in alto, barra dritta o corda.', 'Peso scelto con il perno.'],
+    infortuni: [
+      { zone: ['gomito'], testo: 'Dolore dietro il gomito: peso troppo alto o movimento di colpo. Scala e risali lento.' },
+      { zone: ['spalla'], testo: 'Si muovono le spalle: il peso è troppo.' }] },
+  superset: { gruppo: 'Braccia', anim: ['curl', 'french'], muscoli: ['braccio', 'tricipite', 'avambraccio'],
+    regola: ['Due manubri uguali e una panca piana vicina.'],
+    infortuni: [
+      { zone: ['gomito'], testo: 'Dolore al gomito nel French press: scendi meno e tieni i gomiti stretti. Con un peso leggero non deve far male.' },
+      { zone: ['mano'], testo: 'Dolore al polso nel curl: polsi dritti, non piegarli.' }] },
+  pancapiana: { gruppo: 'Petto', anim: ['pancapiana'], muscoli: ['petto', 'spalla', 'tricipite'],
+    regola: ['Rack: bilanciere all\'altezza delle braccia tese da sdraiato.', 'Sicure poco sotto il petto, o uno spotter.'],
+    infortuni: [{ zone: ['spalla'], testo: 'Dolore davanti alla spalla: gomiti a 45°, non a T.' }] },
+  latmachine: { gruppo: 'Schiena', anim: ['latmachine'], muscoli: ['dorsale', 'braccio'],
+    regola: ['Rulli ben sopra le cosce, che ti bloccano.'],
+    infortuni: [{ zone: ['spalla'], testo: 'Dolore alla spalla: tira davanti al petto, mai dietro la nuca.' }] },
+  curlcavo: { gruppo: 'Braccia', anim: ['curlcavo'], muscoli: ['braccio'],
+    regola: ['Cavo in basso, barra dritta o EZ.'],
+    infortuni: [{ zone: ['gomito'], testo: 'Dolore al gomito: non distendere di colpo in basso.' }] }
+};

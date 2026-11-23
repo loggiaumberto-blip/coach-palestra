@@ -1,6 +1,6 @@
 /* Coach Palestra – service worker: tiene in memoria i file dell'app, così funziona senza internet. */
-const VERSIONE = 'cp-v1';
-const FILE = ['./', 'index.html', 'style.css', 'scheda.js', 'app.js', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png'];
+const VERSIONE = 'cp-v2';
+const FILE = ['./', 'index.html', 'style.css', 'scheda.js', 'dettagli.js', 'anim.js', 'corpo.js', 'app.js', 'stats.js', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(VERSIONE).then(c => c.addAll(FILE)));

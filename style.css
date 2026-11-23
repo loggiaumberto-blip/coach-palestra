@@ -184,3 +184,33 @@ textarea { width: 100%; min-height: 80px; background: var(--carta); border: 1px 
 .foglio .maniglia { width: 44px; height: 5px; border-radius: 3px; background: var(--linea); margin: 6px auto 10px; }
 .avviso { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(90px + env(safe-area-inset-bottom)); z-index: 40; background: #f4f4f5; color: #111; padding: 12px 18px; border-radius: 14px; font-size: 15px; max-width: 90vw; box-shadow: 0 6px 24px #0008; }
 .avviso button { color: #15803d; font-weight: 700; margin-left: 10px; }
+
+/* ---------- v2: disegni, corpo, calibrazione, statistiche ---------- */
+.anim-box { display: block; width: 100%; background: var(--carta); border-radius: var(--raggio); padding: 4px 6px 6px; margin: 10px 0; position: relative; text-align: center; }
+.anim-box.doppia, .anim-grande.doppia { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+.anim svg { width: 100%; height: auto; max-height: 200px; display: block; margin: 0 auto; }
+.anim-box .anim svg { max-height: 180px; }
+.anim .fase { text-align: center; font-size: 14px; color: var(--giallo); font-weight: 700; min-height: 20px; }
+.anim-info { position: absolute; top: 8px; right: 10px; font-size: 12px; color: var(--tenue); }
+.anim-grande { background: var(--carta2); border-radius: 14px; padding: 6px; margin-bottom: 6px; }
+.corpo { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 10px 0; text-align: center; }
+.corpo-svg { width: 100%; max-height: 250px; }
+.foglio .corpo-svg { max-height: 300px; }
+.cal { display: flex; align-items: center; gap: 10px; border-radius: 12px; padding: 10px 12px; margin: 10px 0; font-size: 15px; background: #172a45; color: #bfdbfe; }
+.cal.su { background: #14361f; color: #bbf7d0; }
+.cal.giu { background: #3b2410; color: #fed7aa; }
+.cal.ok { color: #bbf7d0; background: #14361f; }
+.cal span { flex: 1; }
+.cal button { padding: 10px 12px; border-radius: 10px; background: var(--verde); color: #052e16; font-weight: 700; white-space: nowrap; }
+.suggerimento.coach { border-color: #2563eb; }
+.tecnica ul.infortuni li { margin: 8px 0; }
+.navbar button { font-size: 11px; }
+.barra-g { display: grid; grid-template-columns: 76px 1fr 28px; align-items: center; gap: 8px; margin: 8px 0; font-size: 14px; }
+.barra-g .pista { position: relative; height: 12px; background: var(--carta2); border-radius: 6px; }
+.barra-g .pista i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--verde); border-radius: 6px; }
+.barra-g .pista b { position: absolute; top: -3px; width: 3px; height: 18px; background: var(--giallo); border-radius: 2px; }
+.riga-forza { border-bottom: 1px solid var(--linea); padding: 8px 0; }
+.riga-forza summary { display: flex; gap: 10px; align-items: center; list-style: none; cursor: pointer; }
+.riga-forza summary::-webkit-details-marker { display: none; }
+.riga-forza .su { color: var(--verde); } .riga-forza .giu { color: var(--arancio); }
+details.carta summary { cursor: pointer; }

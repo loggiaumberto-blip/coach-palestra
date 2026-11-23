@@ -2,7 +2,7 @@
    Tutto resta sul telefono (localStorage), funziona offline. */
 'use strict';
 
-const VERSIONE_APP = '1.0';
+const VERSIONE_APP = '2.0';
 const CHIAVE = 'cp-dati';
 const IMP_DEFAULT = {
   elastici: ['Molto spesso', 'Spesso', 'Medio', 'Sottile', 'Senza elastico'],
@@ -19,6 +19,10 @@ function carica() {
   d.storico = d.storico || [];
   d.impostazioni = Object.assign({}, IMP_DEFAULT, d.impostazioni || {});
   d.sessione = d.sessione || null;
+  d.profilo = d.profilo || {};
+  d.pesate = d.pesate || [];
+  d.analisi = d.analisi || [];
+  d.override = d.override || {};
   return d;
 }
 function salva() {
@@ -81,10 +85,53 @@ function serieTxt(serie, s) {
   return serie.length + ' giri';
 }
 
+/* Quanto è andata bene una serie di serie allo stesso carico */
+function valuta(rif, s) {
+  const deficit = rif.reduce((a, x) => a + Math.max(0, s.ripMin - x.rip), 0);
+  const completo = rif.length >= s.serie && rif.every(x => x.rip >= s.ripMax);
+  const duro = rif.some(x => x.sens === 'duro');
+  const moltoFacile = rif.every(x => x.sens === 'facile') || rif.every(x => x.rip >= s.ripMax + 3);
+  return { deficit, completo, duro, moltoFacile };
+}
+/* Un «passo» di peso: manubri 1–2 kg, bilancieri e macchine come da scheda */
+function passoPeso(s, kg, dir) {
+  if (s.attrezzo === 'manubri') return (dir > 0 ? kg >= 10 : kg > 10) ? 2 : 1;
+  return s.incremento || s.passo || 2.5;
+}
+const RIR = { facile: 4, giusto: 2, duro: 0.5 };
+/* Durante l'allenamento: dalla serie appena fatta stima il peso giusto per la prossima */
+function calibra(id) {
+  const se = S(), e = se.es[id], s = spec(idEff(id)), x = e.serie[e.serie.length - 1];
+  if (!x) return null;
+  const inp = inputDi(id);
+  if (s.tipo === 'kg') {
+    let rir = RIR[x.sens];
+    if (rir == null) { if (x.rip < s.ripMin) rir = 0; else return null; }
+    const e1 = x.kg * (1 + (x.rip + rir) / 30);                       // forza stimata
+    const obiettivo = e1 / (1 + (s.ripMax + (primeSettimane() ? 2.5 : 2)) / 30);
+    const tondo = s.attrezzo === 'manubri' ? (obiettivo >= 4 ? 1 : 0.5) : s.passo;
+    let k = Math.max(0, Math.round(obiettivo / tondo) * tondo);
+    const passo = passoPeso(s, x.kg, Math.sign(k - x.kg) || 1);
+    k = Math.min(x.kg + 3 * passo, Math.max(x.kg - 3 * passo, k));
+    if (Math.abs(k - x.kg) < passo * 0.75) return { ok: true, testo: 'Peso giusto: tienilo così ✓' };
+    if (k === inp.kg) return { ok: true, testo: `Prossima serie a ${fk(k)} kg ✓` };
+    return { kg: k, su: k > x.kg, testo: k > x.kg ? `Era facile: per la prossima serie prova ${fk(k)} kg` : `Troppo pesante: per la prossima serie scendi a ${fk(k)} kg` };
+  }
+  if (s.tipo === 'elastico') {
+    const b = imp().elastici, bi = x.banda ?? 0;
+    if (x.sens === 'facile' && x.rip >= s.ripMax && bi < b.length - 1 && inp.banda === bi) return { banda: bi + 1, su: true, testo: `Era facile: prova «${b[bi + 1]}»` };
+    if ((x.rip < s.ripMin || (x.sens === 'duro' && x.rip < s.ripMax)) && bi > 0 && inp.banda === bi) return { banda: bi - 1, su: false, testo: `Troppo dura: passa a «${b[bi - 1]}», più spesso` };
+  }
+  return null;
+}
+
 /* Cosa fare oggi in base all'ultima volta */
 function suggerisci(id, storico = dati.storico) {
   const s = spec(id), st = storiaDi(id, storico), last = st[0];
   const quando = last ? giorniFa(last.data) : '';
+  const ov = dati.override[id];
+  if (ov && (!last || ov.t > last.data) && (s.tipo === 'kg' || s.tipo === 'elastico'))
+    return { kg: ov.kg, banda: ov.banda, rip: s.ripMin, msg: '🧑‍🏫 Consiglio del coach: ' + (ov.motivo || ''), cl: 'su' };
   if (s.tipo === 'kg') {
     if (!last) {
       if (s.partenza) {
@@ -93,39 +140,36 @@ function suggerisci(id, storico = dati.storico) {
       }
       return { kg: s.inizio || 10, msg: `Da provare: scegli un peso con cui fai ${ripTxt(s)} ripetizioni e ne avresti ancora 2.`, cl: '' };
     }
-    const kgMax = Math.max(...last.serie.map(x => x.kg));
-    const alTop = last.serie.filter(x => x.kg === kgMax);
-    const completo = alTop.length >= s.serie && alTop.every(x => x.rip >= s.ripMax);
-    const duro = last.serie.some(x => x.sens === 'duro');
-    const facili = last.serie.every(x => x.sens === 'facile');
-    const mancate = alTop.some(x => x.rip < s.ripMin);
+    const kgRif = last.serie[last.serie.length - 1].kg;   // il peso a cui sei arrivato
+    const rif = last.serie.filter(x => x.kg === kgRif);
+    const v = valuta(rif, s);
     const base = `Ultima volta (${quando}): ${serieTxt(last.serie, s)}.`;
-    if (completo && !duro) {
-      let inc = s.incremento;
-      if (s.attrezzo === 'manubri') inc = kgMax >= 10 ? 2 : 1;
-      if (facili && s.incFacile) inc = s.incFacile;
-      return { kg: kgMax + inc, msg: `${base} Tutte complete → sali di ${fk(inc)} kg.`, cl: 'su' };
+    const cambia = n => { let k = kgRif; for (let i = 0; i < Math.abs(n); i++) k = Math.max(0, k + Math.sign(n) * passoPeso(s, k, Math.sign(n))); return k; };
+    if (v.completo && v.moltoFacile) { const k = s.incFacile ? kgRif + s.incFacile : cambia(2); return { kg: k, msg: `${base} Tutte complete e facili → sali di ${fk(k - kgRif)} kg.`, cl: 'su' }; }
+    if (v.completo && !v.duro) { const k = cambia(1); return { kg: k, msg: `${base} Tutte complete → sali di ${fk(k - kgRif)} kg.`, cl: 'su' }; }
+    if (v.completo && v.duro) {
+      if (primeSettimane()) { const k = cambia(-1); return { kg: k, msg: `${base} Complete ma al limite: nelle prime 2 settimane scendi a ${fk(k)} kg.`, cl: 'giu' }; }
+      return { kg: kgRif, msg: `${base} Complete ma al limite: resta a ${fk(kgRif)} kg finché non le chiudi con margine.`, cl: '' };
     }
-    if (completo && duro) return { kg: kgMax, msg: `${base} Complete ma al limite: resta a ${fk(kgMax)} kg finché non le chiudi con margine.`, cl: '' };
-    if (mancate && duro && primeSettimane()) {
-      const meno = s.attrezzo === 'manubri' ? (kgMax > 10 ? 2 : 1) : s.passo;
-      const k = Math.max(0, kgMax - meno);
-      return { kg: k, msg: `${base} Nelle prime 2 settimane resta lontano dal limite: scendi a ${fk(k)} kg.`, cl: 'giu' };
-    }
-    if (mancate) return { kg: kgMax, msg: `${base} Non tutte complete: resta a ${fk(kgMax)} kg.`, cl: '' };
-    return { kg: kgMax, msg: `${base} Resta a ${fk(kgMax)} kg e prova ad arrivare a ${s.ripMax} in tutte le serie.`, cl: '' };
+    if (v.deficit === 0) return { kg: kgRif, msg: rif.length < s.serie ? `${base} Hai trovato il peso: rifai tutte le serie a ${fk(kgRif)} kg.` : `${base} Resta a ${fk(kgRif)} kg e arriva a ${s.ripMax} in tutte le serie.`, cl: '' };
+    if (v.deficit <= 2) return { kg: kgRif, msg: `${base} Ti sono mancate ${v.deficit} ripetizioni: riprova a ${fk(kgRif)} kg.`, cl: '' };
+    if (v.deficit <= s.serie * 2) { const k = cambia(-1); return { kg: k, msg: `${base} Ti sono mancate ${v.deficit} ripetizioni → scendi a ${fk(k)} kg.`, cl: 'giu' }; }
+    const k = cambia(-2);
+    return { kg: k, msg: `${base} Peso troppo alto (mancate ${v.deficit} ripetizioni) → scendi a ${fk(k)} kg.`, cl: 'giu' };
   }
   if (s.tipo === 'elastico') {
     const b = imp().elastici;
-    if (!last) return { banda: 0, rip: s.ripMin, msg: 'Parti con l\'elastico più spesso che ti fa fare tutte le ripetizioni con tecnica pulita (va bene anche la macchina assistita).', cl: '' };
-    const bi = Math.max(...last.serie.map(x => x.banda ?? 0));
-    const completo = last.serie.length >= s.serie && last.serie.every(x => x.rip >= s.ripMax && (x.banda ?? 0) === bi);
+    if (!last) return { banda: 0, rip: s.ripMin, msg: "Parti con l'elastico più spesso che ti fa fare tutte le ripetizioni con tecnica pulita (va bene anche la macchina assistita).", cl: "" };
+    const bi = last.serie[last.serie.length - 1].banda ?? 0;
+    const rif = last.serie.filter(x => (x.banda ?? 0) === bi);
+    const v = valuta(rif, s);
     const base = `Ultima volta (${quando}): ${serieTxt(last.serie, s)} con «${b[bi] || '?'}».`;
-    if (completo) {
+    if (v.completo && !v.duro) {
       if (bi >= b.length - 1) return { banda: bi, rip: s.ripMax, msg: `${base} Tutto senza elastico! Ora aggiungi ripetizioni o fai la discesa lenta (3–5").`, cl: 'su' };
       if (bi === b.length - 2) return { banda: bi, rip: s.ripMin, msg: `${base} Con il più sottile fai già ${s.serie}×${s.ripMax}: ora fai le prime ripetizioni senza elastico e finisci la serie con l'elastico, oppure solo la discesa lenta (3–5").`, cl: 'su' };
-      return { banda: bi + 1, rip: s.ripMin, msg: `${base} Hai fatto ${s.serie}×${s.ripMax} → passa a «${b[bi + 1]}».`, cl: 'su' };
+      return { banda: bi + 1, rip: s.ripMin, msg: `${base} Tutte complete → passa a «${b[bi + 1]}».`, cl: 'su' };
     }
+    if (v.deficit >= 3 && bi > 0) return { banda: bi - 1, rip: s.ripMin, msg: `${base} Ti sono mancate ${v.deficit} ripetizioni → torna a «${b[bi - 1]}», più spesso.`, cl: 'giu' };
     return { banda: bi, rip: s.ripMin, msg: `${base} Resta con questo elastico finché non arrivi a ${s.serie}×${s.ripMax}.`, cl: '' };
   }
   if (s.tipo === 'corpo') {
@@ -170,7 +214,7 @@ function dischi(kg, s) {
   const pezzi = [], dischiDisp = [20, 15, 10, 5, 2.5, 1.25];
   for (const d of dischiDisp) while (lato >= d - 0.001) { pezzi.push(d); lato -= d; }
   const resto = lato > 0.01 ? ' (circa)' : '';
-  return `per lato: ${pezzi.map(fk).join(' + ')}${resto} · ${s.carico === 'trapbar' ? 'trap bar' : 'bilanciere'} ${fk(barra)} kg`;
+  return `per lato ${pezzi.map(fk).join(' + ')}${resto} (${s.carico === 'trapbar' ? 'trap bar' : 'bilanciere'} ${fk(barra)})`;
 }
 function avvicinamento(kg, s) {
   const barra = pesoBarra(s);
@@ -233,6 +277,7 @@ function apriFoglio(html) {
   const f = $('#foglio');
   f.innerHTML = `<div class="dentro"><div class="maniglia"></div>${html}</div>`;
   f.classList.remove('nascosto');
+  ANIM.avvia();
 }
 function chiudiFoglio() { $('#foglio').classList.add('nascosto'); $('#foglio').innerHTML = ''; }
 $('#foglio').addEventListener('click', e => { if (e.target.id === 'foglio') chiudiFoglio(); });
@@ -258,13 +303,15 @@ function render() {
   else if (v === 'guida') html = vGuida();
   else if (v === 'guidaEs') html = vGuidaEs(vista.id);
   else if (v === 'impostazioni') html = vImpostazioni();
-  const conNav = ['home', 'storico', 'guida', 'impostazioni'].includes(v);
+  else if (v === 'stats') html = vStats();
+  const conNav = ['home', 'storico', 'stats', 'guida', 'impostazioni'].includes(v);
   app.innerHTML = html + (conNav ? navbar(v) : '');
   tick(true);
+  ANIM.avvia();
 }
 function navbar(attivo) {
   const b = (n, ic, t) => `<button data-a="nav" data-v="${n}" class="${attivo === n ? 'attivo' : ''}"><span>${ic}</span>${t}</button>`;
-  return `<nav class="navbar">${b('home', '🏋️', 'Oggi')}${b('storico', '📅', 'Storico')}${b('guida', '📖', 'Esercizi')}${b('impostazioni', '⚙️', 'Impostazioni')}</nav>`;
+  return `<nav class="navbar">${b('home', '🏋️', 'Oggi')}${b('storico', '📅', 'Storico')}${b('stats', '📊', 'Statistiche')}${b('guida', '📖', 'Esercizi')}${b('impostazioni', '⚙️', 'Altro')}</nav>`;
 }
 
 /* ---------- HOME ---------- */
@@ -295,6 +342,10 @@ function vHome() {
     <div class="stat"><b class="num">${sett}</b><small>questa settimana<br>(obiettivo 2–3)</small></div>
     <div class="stat"><b class="num">${dati.storico.length}</b><small>allenamenti<br>in totale</small></div>
     <div class="stat"><b>${ultimo ? giorniFa(ultimo.inizio) : '–'}</b><small>ultimo<br>allenamento</small></div></div>`;
+  const nuova = dati.analisi.find(a => !a.letta);
+  if (nuova) h += `<button class="carta riga" style="width:100%;text-align:left;border:1px solid #2563eb" data-a="analisi-letta" data-id="${esc(nuova.id)}"><span style="font-size:28px">🧑‍🏫</span><span class="cresci"><b>Nuove note dal coach</b><br><span class="tenue piccolo">${esc(nuova.titolo || '')}</span></span><span class="tenue">›</span></button>`;
+  if (dati.storico.length && (!dati.ultimoExport || Date.now() - dati.ultimoExport > 7 * 86400000))
+    h += `<div class="banner blu riga"><span class="cresci">📤 <b>Export della settimana</b><br>Salvalo su Drive e chiedi a Claude l'analisi.</span><button class="btn primario" style="width:auto;padding:10px 14px;font-size:15px" data-a="esporta">Esporta</button></div>`;
   if (primeSettimane()) h += `<div class="banner">🔰 <b>Prime 2 settimane:</b> chiudi ogni serie con 2–3 ripetizioni ancora in canna.</div>`;
   h += `<h3 class="etichetta" style="margin:20px 0 4px">Oppure scegli il giorno</h3><div class="giorni-lista">`;
   for (const k of SCHEDA.rotazione) {
@@ -389,52 +440,72 @@ function stepper(campo, val, unita, extraHtml = '') {
     <button data-a="passo" data-c="${campo}" data-d="1">+</button></div>`;
 }
 
+function animEsercizio(id, e, s) {
+  let ids = (SCHEDA.dettagli[idEff(id)] || {}).anim || [];
+  if (s.tipo === 'circuito') ids = [ids[Math.min(e.parte, ids.length - 1)]];
+  if (!ids.length) return '';
+  return `<button class="anim-box ${ids.length > 1 ? 'doppia' : ''}" data-a="tecnica">${ids.map(a => ANIM.html(a)).join('')}<span class="anim-info">📖 Come si fa</span></button>`;
+}
+function cartaCalibra(id) {
+  const c = calibra(id);
+  if (!c) return '';
+  if (c.ok) return `<div class="cal ok">✓ ${esc(c.testo)}</div>`;
+  const val = c.kg != null ? fk(c.kg) + ' kg' : esc(imp().elastici[c.banda]);
+  return `<div class="cal ${c.su ? 'su' : 'giu'}"><span>${c.su ? '⬆' : '⬇'} ${esc(c.testo)}</span><button data-a="applica-cal" data-id="${id}">Usa ${val}</button></div>`;
+}
+
 function vEsercizio() {
   const se = S(), id = idAttuale(), e = se.es[id], eid = idEff(id), s = spec(eid);
   const tot = serieTot(id), fatte = e.serie.length, finito = fatte >= tot;
   const sg = suggerisci(eid);
   const inp = inputDi(id);
+  const giro = s.tipo === 'circuito' || s.tipo === 'superset';
   let h = `<div class="es-nome">${esc(s.nome)}${s.nuovo ? '<span class="nuovo">NUOVO</span>' : ''}</div>`;
   if (e.alt) h += `<div class="tenue piccolo">al posto di ${esc(spec(id).nome)} (per oggi)</div>`;
-  const unitaG = s.tipo === 'circuito' || s.tipo === 'superset' ? 'Giro' : 'Serie';
-  h += `<div class="serie-di">${finito ? '✓ Esercizio completato' : `${unitaG} ${fatte + 1} di ${tot}`}</div>`;
+  h += `<div class="serie-di">${finito ? '✓ Esercizio completato' : `${giro ? 'Giro' : 'Serie'} ${fatte + 1} di ${tot}`}</div>`;
 
-  // riquadro obiettivo
+  // 1. obiettivo: serie × rip · recupero · peso
   const pesoBox = s.tipo === 'kg' ? `<div><b class="num">${fk(sg.kg)}</b><small>kg consigliati</small></div>`
     : s.tipo === 'elastico' ? `<div><b style="font-size:20px">${esc(imp().elastici[sg.banda] || '')}</b><small>elastico</small></div>` : '';
   const ripBox = s.tipo === 'circuito' ? `${s.serie}–${s.serieMax}` : s.tipo === 'superset' ? s.serie + '×12' : `${s.serie}×${s.ripMin === s.ripMax ? s.ripMin : s.ripMin + '–' + s.ripMax}`;
-  h += `<div class="target"><div><b class="num">${ripBox}</b><small>${s.tipo === 'circuito' || s.tipo === 'superset' ? 'giri' : 'serie × rip'}${s.ripNota ? ' ' + s.ripNota : ''}</small></div>
+  h += `<div class="target"><div><b class="num">${ripBox}</b><small>${giro ? 'giri' : 'serie × rip'}${s.ripNota ? ' ' + s.ripNota : ''}</small></div>
     <div><b class="num">${recTxt(s.recupero)}</b><small>recupero</small></div>${pesoBox}</div>`;
-  if (sg.msg) h += `<div class="suggerimento ${sg.cl}">${esc(sg.msg)}</div>`;
-  if (fatte === 0 && primeSettimane() && s.tipo !== 'circuito') h += `<div class="tenue piccolo" style="margin:4px 2px">🔰 Chiudi ogni serie con 2–3 ripetizioni ancora in canna.</div>`;
-  if (s.avvicinamento && fatte === 0 && s.tipo === 'kg') h += `<div class="avvicinamento">🪜 <b>Avvicinamento</b> (non conta): ${avvicinamento(inp.kg, s)}</div>`;
 
+  // 2. il disegno animato (tocca → come si fa)
+  h += animEsercizio(id, e, s);
+
+  // 3. peso e ripetizioni + completa
   if (!finito) {
+    if (fatte > 0) h += cartaCalibra(id);
+    const fatta = `<button class="btn primario enorme" data-a="serie-fatta">✓ ${giro ? 'Giro' : 'Serie'} ${fatte + 1} ${giro ? 'fatto' : 'fatta'}</button>`;
     if (s.tipo === 'kg') {
       h += stepper('kg', fk(inp.kg), s.unita || 'kg', dischi(inp.kg, s) ? `<div class="dischi">${dischi(inp.kg, s)}</div>` : '');
-      h += stepper('rip', inp.rip, 'ripetizioni fatte' + (s.ripNota ? ' ' + s.ripNota : ''));
-      h += `<button class="btn primario enorme" data-a="serie-fatta">✓ Serie ${fatte + 1} fatta</button>`;
+      h += stepper('rip', inp.rip, 'ripetizioni fatte' + (s.ripNota ? ' ' + s.ripNota : '')) + fatta;
     } else if (s.tipo === 'elastico') {
-      h += `<div class="etichetta" style="margin-top:12px">Elastico</div><div class="chip-riga">${imp().elastici.map((b, i) => `<button class="chip ${inp.banda === i ? 'scelto' : ''}" data-a="banda" data-i="${i}">${esc(b)}</button>`).join('')}</div>`;
-      h += stepper('rip', inp.rip, 'ripetizioni fatte');
-      h += `<button class="btn primario enorme" data-a="serie-fatta">✓ Serie ${fatte + 1} fatta</button>`;
+      h += `<div class="chip-riga">${imp().elastici.map((b, i) => `<button class="chip ${inp.banda === i ? 'scelto' : ''}" data-a="banda" data-i="${i}">${esc(b)}</button>`).join('')}</div>`;
+      h += stepper('rip', inp.rip, 'ripetizioni fatte') + fatta;
     } else if (s.tipo === 'corpo') {
-      h += stepper('rip', inp.rip, 'ripetizioni fatte');
-      h += `<button class="btn primario enorme" data-a="serie-fatta">✓ Serie ${fatte + 1} fatta</button>`;
+      h += stepper('rip', inp.rip, 'ripetizioni fatte') + fatta;
     } else if (s.tipo === 'superset') {
       s.parti.forEach((p, i) => {
         h += `<div class="parte"><h3>${i + 1}. ${esc(p.nome)} ×${p.rip}</h3>
           ${stepper('pkg' + i, fk(inp.parti[i].kg), 'kg per manubrio')}${stepper('prip' + i, inp.parti[i].rip, 'ripetizioni')}</div>`;
       });
-      h += `<button class="btn primario enorme" data-a="serie-fatta">✓ Giro ${fatte + 1} fatto</button>`;
+      h += fatta;
     } else if (s.tipo === 'circuito') {
       h += vCircuito(id, s, e);
     }
   } else {
     h += `<button class="btn primario enorme" data-a="prossimo">Prossimo esercizio →</button>`;
     const max = s.serieMax ? s.serieMax : 99;
-    if (fatte < max) h += `<button class="btn" data-a="aggiungi-serie">+ Aggiungi ${s.tipo === 'circuito' || s.tipo === 'superset' ? 'un giro' : 'una serie'}</button>`;
+    if (fatte < max) h += `<button class="btn" data-a="aggiungi-serie">+ Aggiungi ${giro ? 'un giro' : 'una serie'}</button>`;
+    h += cartaDolori(id);
   }
+
+  // 4. sotto: consigli, serie fatte, altre azioni
+  if (sg.msg && !finito) h += `<div class="suggerimento ${sg.cl}">${esc(sg.msg)}</div>`;
+  if (fatte === 0 && primeSettimane() && s.tipo !== 'circuito') h += `<div class="tenue piccolo" style="margin:4px 2px">🔰 Chiudi ogni serie con 2–3 ripetizioni ancora in canna.</div>`;
+  if (s.avvicinamento && fatte === 0 && s.tipo === 'kg') h += `<div class="avvicinamento">🪜 <b>Avvicinamento</b> (non conta): ${avvicinamento(inp.kg, s)}</div>`;
 
   if (e.serie.length) {
     h += `<div class="serie-fatte"><div class="etichetta">Fatte</div>` + e.serie.map((x, i) => {
@@ -449,11 +520,41 @@ function vEsercizio() {
     }).join('') + '</div>';
   }
 
-  h += `<div class="azioni-sec"><button data-a="tecnica">📖 Come si fa</button>`;
-  if (spec(id).alternativa || s.dolore) h += `<button data-a="dolore">🤕 Fa male?</button>`;
+  h += `<div class="azioni-sec"><button data-a="tecnica">📖 Come si fa</button><button data-a="dolore">🤕 Fa male?</button>`;
   if (!finito) h += `<button data-a="salta">⏭ Salta</button>`;
   h += `<button data-a="elenco">🔀 Altro esercizio</button></div>`;
   return h;
+}
+
+/* ---------- DOLORI ---------- */
+const TIPI_DOLORE = ['Pungente / fitta', 'Sordo, continuo', 'Tira (stiramento)', 'Bruciore', 'Formicolio', 'Scrocchio con dolore'];
+const QUANDO_DOLORE = ['Durante il movimento', 'In un punto preciso del movimento', 'Solo a fine serie', 'Anche a riposo'];
+let nd = null; // dolore che si sta compilando
+function doloriDi(es) { const se = S(); if (es === 'generale') return (se.doloriGenerali = se.doloriGenerali || []); return (se.es[es].dolori = se.es[es].dolori || []); }
+function rigaDolore(d) { return `🤕 <b>${esc(CORPO.nome(d.zona))}</b><br><span class="tenue piccolo">${esc(d.tipo)} · ${d.intensita}/10 · ${esc(d.quando || '')}${d.nota ? ' · ' + esc(d.nota) : ''}</span>`; }
+function cartaDolori(id) {
+  const e = S().es[id], lista = e.dolori || [];
+  if (lista.length) return `<div class="carta"><h2>Dolori segnati</h2>${lista.map((d, i) => `<div class="voce"><span>${rigaDolore(d)}</span><button class="link" data-a="elimina-dolore" data-id="${id}" data-i="${i}">togli</button></div>`).join('')}
+    <button class="btn" data-a="dolore-mappa" data-id="${id}">+ Segna un altro dolore</button></div>`;
+  if (e.dolorCheck === 'no') return `<div class="tenue piccolo" style="text-align:center;margin:10px">👍 Nessun dolore</div>`;
+  return `<div class="carta"><div class="domanda" style="margin-top:0">Hai sentito dolore durante l'esercizio?</div>
+    <div class="btn-riga"><button class="btn" data-a="nessun-dolore" data-id="${id}">👍 No</button><button class="btn" data-a="dolore-mappa" data-id="${id}">🤕 Sì, segna dove</button></div></div>`;
+}
+function foglioDolore() {
+  if (!nd.zona) {
+    const scelte = {};
+    for (const d of doloriDi(nd.es)) scelte[d.zona] = '#fb923c';
+    apriFoglio(`<h2 style="margin:4px 0 4px">🤕 Dove senti dolore?</h2><div class="tenue piccolo">Tocca la zona. Nel disegno «davanti» la tua destra è a sinistra, come allo specchio.</div>
+      ${CORPO.doppia({ cliccabile: true, scelte })}<button class="btn" data-a="chiudi">Annulla</button>`);
+    return;
+  }
+  const chip = (campo, val, testo) => `<button class="chip ${String(nd[campo]) === String(val) ? 'scelto' : ''}" data-a="nd" data-c="${campo}" data-v="${esc(val)}">${esc(testo)}</button>`;
+  apriFoglio(`<h2 style="margin:4px 0 0">${esc(CORPO.nome(nd.zona))}</h2><button class="link" data-a="nd" data-c="zona" data-v="">‹ cambia zona</button>
+    <div class="etichetta" style="margin-top:10px">Che dolore è?</div><div class="chip-riga">${TIPI_DOLORE.map(t => chip('tipo', t, t)).join('')}</div>
+    <div class="etichetta">Quanto forte? (1 = appena, 10 = fortissimo)</div><div class="chip-riga">${[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => chip('intensita', n, n)).join('')}</div>
+    <div class="etichetta">Quando lo senti?</div><div class="chip-riga">${QUANDO_DOLORE.map(t => chip('quando', t, t)).join('')}</div>
+    <textarea id="nd-nota" placeholder="Altro? (es. solo scendendo, dalla 3ª serie, da ieri…)">${esc(nd.nota || '')}</textarea>
+    <button class="btn primario" style="margin-top:10px" data-a="salva-dolore">Salva</button><button class="btn" data-a="chiudi">Annulla</button>`);
 }
 
 function vCircuito(id, s, e) {
@@ -488,6 +589,9 @@ function vRiposo() {
       ${[['facile', 'Facile', '3+ in canna'], ['giusto', 'Giusta', '2 in canna'], ['duro', 'Al limite', '0–1 in canna']].map(([k, t, d]) =>
         `<button class="${k} ${ultima.sens === k ? 'scelto' : ''}" data-a="sens" data-s="${k}"><b>${t}</b>${d}</button>`).join('')}</div>`;
   }
+
+  if (!finito) h += cartaCalibra(id);
+  else h += cartaDolori(id);
 
   // cosa viene dopo
   h += `<div class="prossima">`;
@@ -530,8 +634,10 @@ function recordSessione(note) {
     esercizi[eid] = { nome: s.nome, tipo: s.tipo, serie: e.serie.map(x => Object.assign({}, x)), saltato: e.stato === 'saltato' };
     if (e.alt) esercizi[eid].alPostoDi = id;
     if (e.dolore) esercizi[eid].dolore = true;
+    if (e.dolori && e.dolori.length) esercizi[eid].dolori = e.dolori.map(d => Object.assign({}, d));
+    if (e.dolorCheck === 'no') esercizi[eid].nessunDolore = true;
   }
-  return { id: 'w' + se.inizio, giorno: se.giorno, inizio: se.inizio, fine: Date.now(), esercizi, note: note || '' };
+  return { id: 'w' + se.inizio, giorno: se.giorno, inizio: se.inizio, fine: Date.now(), esercizi, dolori: (se.doloriGenerali || []).slice(), note: note || '' };
 }
 function analisi(rec) {
   let serie = 0, volume = 0;
@@ -577,7 +683,10 @@ function vFine() {
     const sg = suggerisci(eid, storicoFinto);
     h += `<div class="voce"><span>${esc(s.nome)}${e.dolore ? ' 🤕' : ''}</span><b style="text-align:right">${obiettivoTxt(eid, sg)}${sg.cl === 'su' ? ' ⬆' : sg.cl === 'giu' ? ' ⬇' : ''}</b></div>`;
   }
-  h += `</div><div class="carta"><h2>Note</h2><textarea id="note" placeholder="Come ti sei sentito? Macchine occupate, dolori, cose da ricordare…">${esc(se.note || '')}</textarea></div>
+  const tuttiDolori = [...se.ordine.flatMap(id => (se.es[id].dolori || []).map(d => [spec(idEff(id)).nome, d])), ...(se.doloriGenerali || []).map(d => ['In generale', d])];
+  h += `</div><div class="carta"><h2>🤕 Dolori di oggi</h2>${tuttiDolori.length ? tuttiDolori.map(([n, d]) => `<div class="voce"><span>${rigaDolore(d)}<br><span class="tenue piccolo">${esc(n)}</span></span></div>`).join('') : '<div class="tenue">Nessun dolore segnato. 👍</div>'}
+    <button class="btn" style="margin-top:10px" data-a="dolore-mappa" data-id="generale">+ Segna un dolore</button></div>`;
+  h += `<div class="carta"><h2>Note</h2><textarea id="note" placeholder="Come ti sei sentito? Macchine occupate, dolori, cose da ricordare…">${esc(se.note || '')}</textarea></div>
     <button class="btn primario enorme" data-a="salva-allenamento">💾 Salva allenamento</button>
     <button class="btn" data-a="torna-all">‹ Torna all'allenamento</button>`;
   return h;
@@ -609,6 +718,8 @@ function vDettaglio(id) {
       <span class="num" style="text-align:right">${e.serie.length ? esc(serieTxt(e.serie, s)) + (s.tipo === 'elastico' ? '<br><span class="tenue piccolo">' + esc(imp().elastici[e.serie[0].banda] || '') + '</span>' : '') : '<span class="tenue">saltato</span>'}</span></div>`;
   }
   h += `</div>`;
+  const dol = [...Object.values(r.esercizi).flatMap(e => (e.dolori || []).map(d => [e.nome, d])), ...(r.dolori || []).map(d => ['In generale', d])];
+  if (dol.length) h += `<div class="carta"><h2>🤕 Dolori</h2>${dol.map(([n, d]) => `<div class="voce"><span>${rigaDolore(d)}<br><span class="tenue piccolo">${esc(n)}</span></span></div>`).join('')}</div>`;
   if (r.note) h += `<div class="carta"><h2>Note</h2>${esc(r.note).replace(/\n/g, '<br>')}</div>`;
   h += `<button class="btn pericolo" data-a="elimina-allenamento" data-id="${r.id}">🗑 Elimina questo allenamento</button>`;
   return h;
@@ -628,15 +739,26 @@ function vGuida() {
   }
   return h;
 }
-function htmlTecnica(s) {
-  const t = s.tecnica;
-  return `<div class="tecnica"><div class="tenue">💪 ${esc(t.muscoli)}</div>
-    <h3>Preparazione</h3><ol>${t.prepara.map(x => `<li>${esc(x)}</li>`).join('')}</ol>
-    <h3>Esecuzione</h3><ol>${t.esegui.map(x => `<li>${esc(x)}</li>`).join('')}</ol>
-    <h3>Errori da evitare</h3><ul class="errori">${t.errori.map(x => `<li>${esc(x)}</li>`).join('')}</ul>
-    <h3>Respirazione</h3><div>${esc(t.respiro)}</div>
-    <div class="consiglio">💡 ${esc(t.consiglio)}</div>
+function htmlTecnica(id) {
+  const s = spec(id), t = s.tecnica, det = SCHEDA.dettagli[id] || {};
+  const lista = (arr, tag = 'ol') => `<${tag}>${arr.map(x => `<li>${esc(x)}</li>`).join('')}</${tag}>`;
+  let h = `<div class="tecnica">`;
+  if (det.anim && det.anim.length) h += `<div class="anim-grande ${det.anim.length > 1 ? 'doppia' : ''}">${det.anim.map(a => ANIM.html(a)).join('')}</div>`;
+  h += `<h3>💪 Muscoli che lavorano</h3><div>${esc(t.muscoli)}</div>`;
+  if (det.muscoli) h += CORPO.doppia({ verde: det.muscoli });
+  if (det.regola) h += `<h3>🔧 Regolazione</h3>${lista(det.regola, 'ul')}`;
+  h += `<h3>🧍 Preparazione</h3>${lista(t.prepara)}<h3>▶ Esecuzione</h3>${lista(t.esegui)}
+    <h3>✗ Errori da evitare</h3><ul class="errori">${t.errori.map(x => `<li>${esc(x)}</li>`).join('')}</ul>
+    <h3>🌬 Respirazione</h3><div>${esc(t.respiro)}</div>`;
+  if (det.infortuni && det.infortuni.length) {
+    const rosse = [...new Set(det.infortuni.flatMap(x => x.zone))];
+    h += `<h3>⚠️ Infortuni: qui NON devi sentire dolore</h3>${CORPO.doppia({ rosso: rosse })}
+      <div class="banner">Fatica e bruciore nel muscolo che lavora vanno bene. Dolore pungente, in un'articolazione o che peggiora serie dopo serie: fermati.</div>
+      <ul class="infortuni">${det.infortuni.map(x => `<li><b>${x.zone.map(z => CORPO.NOMI[z]).join(', ')}</b> – ${esc(x.testo)}</li>`).join('')}</ul>`;
+  }
+  h += `<div class="consiglio">💡 ${esc(t.consiglio)}</div>
     <a class="link" style="display:inline-block;margin-top:10px" target="_blank" rel="noopener" href="https://www.youtube.com/results?search_query=${encodeURIComponent(s.nome + ' tecnica esecuzione')}">▶ Cerca un video (serve internet)</a></div>`;
+  return h;
 }
 function grafico(id) {
   const s = spec(id), st = storiaDi(id).slice(0, 20).reverse();
@@ -666,7 +788,7 @@ function vGuidaEs(id) {
   if (s.nuovo || s.cambio) h += `<div class="banner blu">${s.nuovo ? 'NUOVO – ' + esc(s.nuovo) : esc(s.cambio)}</div>`;
   h += `<div class="suggerimento ${suggerisci(id).cl}">Prossima volta: <b>${obiettivoTxt(id, suggerisci(id))}</b><br>${esc(suggerisci(id).msg)}</div>`;
   h += grafico(id);
-  h += `<div class="carta">${htmlTecnica(s)}</div>`;
+  h += `<div class="carta">${htmlTecnica(id)}</div>`;
   if (st.length) {
     h += `<div class="carta"><h2>Ultime volte</h2>${st.slice(0, 6).map(p => `<div class="voce"><span>${dataTxt(p.data)}</span><span class="num">${esc(serieTxt(p.serie, s))}</span></div>`).join('')}</div>`;
   }
@@ -677,7 +799,14 @@ function vGuidaEs(id) {
 function vImpostazioni() {
   const i = imp();
   const sw = (k, t, d) => `<div class="campo"><span>${t}${d ? `<br><span class="tenue piccolo">${d}</span>` : ''}</span><button class="interruttore ${i[k] ? 'on' : ''}" data-a="interruttore" data-k="${k}"></button></div>`;
-  return `<div class="testata"><h1>Impostazioni</h1></div>
+  const pr = dati.profilo;
+  return `<div class="testata"><h1>Altro</h1></div>
+    <div class="carta"><h2>👤 Profilo</h2><div class="tenue piccolo">Serve a Claude per l'analisi (resta sul telefono e finisce solo nel tuo export).</div>
+      <div class="campo"><span>Età</span><input type="number" inputmode="numeric" data-prof="eta" value="${pr.eta ?? ''}"></div>
+      <div class="campo"><span>Altezza (cm)</span><input type="number" inputmode="numeric" data-prof="altezza" value="${pr.altezza ?? ''}"></div>
+      <div class="campo"><span>Obiettivo</span><input type="text" data-prof="obiettivo" value="${esc(pr.obiettivo ?? 'Ipertrofia + definizione')}"></div>
+      <div class="campo"><span>Peso di oggi (kg)</span><input type="number" inputmode="decimal" id="pesata" value="${pr.peso ?? ''}"></div>
+      <button class="btn" data-a="pesata">⚖️ Salva il peso di oggi</button></div>
     <div class="carta"><h2>Suoni durante il recupero</h2>
       ${sw('suono', 'Bip', 'a 3-2-1 secondi dalla fine e allo scadere')}
       ${sw('vibrazione', 'Vibrazione', 'allo scadere del recupero')}
@@ -688,9 +817,10 @@ function vImpostazioni() {
     <div class="carta"><h2>Bilancieri</h2><div class="tenue piccolo">Servono per dirti quanti dischi mettere per lato. Metti 0 se il peso che segni è solo quello dei dischi.</div>
       <div class="campo"><span>Bilanciere olimpico (kg)</span><input type="number" inputmode="decimal" data-imp="bilanciere" value="${i.bilanciere}"></div>
       <div class="campo"><span>Trap bar (kg)</span><input type="number" inputmode="decimal" data-imp="trapbar" value="${i.trapbar}"></div></div>
-    <div class="carta"><h2>Backup</h2><div class="tenue piccolo">I dati stanno solo su questo telefono. Ogni tanto esporta un backup (e mandalo a Claude se vuoi un'analisi dei progressi).</div>
-      <button class="btn" style="margin-top:10px" data-a="esporta">📤 Esporta backup</button>
-      <button class="btn" data-a="importa">📥 Importa backup</button>
+    <div class="carta"><h2>📤 Export e analisi</h2><div class="tenue piccolo">I dati stanno solo su questo telefono. Ogni settimana: <b>Esporta</b> → «Salva su Drive» (cartella Palestra) → chiedi a Claude l'analisi. Claude ti rimanda un file <i>analisi_…json</i>: aprilo con <b>Importa</b> e lo trovi in Statistiche.</div>
+      <button class="btn" style="margin-top:10px" data-a="esporta">📤 Esporta i dati</button>
+      <button class="btn" data-a="importa">📥 Importa (analisi del coach o backup)</button>
+      ${dati.ultimoExport ? `<div class="tenue piccolo" style="margin-top:8px">Ultimo export: ${dataTxt(dati.ultimoExport)}</div>` : ''}
       <input type="file" id="file-importa" accept=".json,application/json,text/plain" class="nascosto"></div>
     <div class="carta"><h2>Regole della scheda</h2><div class="piccolo">${esc(SCHEDA.regole.progressione)}</div><div class="piccolo" style="margin-top:8px">${esc(SCHEDA.regole.dolore)}</div></div>
     <button class="btn pericolo" data-a="cancella-tutto">Cancella tutti i dati</button>
@@ -904,15 +1034,16 @@ const AZ = {
     chiudiFoglio(); salva(); render();
   },
   tecnica() {
-    const s = spec(idEff(idAttuale()));
-    apriFoglio(`<h2 style="margin:4px 0 8px">${esc(s.nome)}</h2>${htmlTecnica(s)}<button class="btn" style="margin-top:14px" data-a="chiudi">Chiudi</button>`);
+    const eid = idEff(idAttuale()), s = spec(eid);
+    apriFoglio(`<h2 style="margin:4px 0 8px">${esc(s.nome)}</h2>${htmlTecnica(eid)}<button class="btn" style="margin-top:14px" data-a="chiudi">Chiudi</button>`);
   },
   dolore() {
     const id = idAttuale(), e = S().es[id], orig = spec(id);
     let h = `<h2 style="margin:4px 0 8px">🤕 Fa male?</h2><div>${esc(SCHEDA.regole.dolore)}</div>
       <div class="banner">Dolore = all'articolazione (spalla, gomito, ginocchio), pungente o che peggiora. La normale fatica del muscolo va bene.</div>
+      <button class="btn primario" data-a="dolore-mappa" data-id="${id}">📍 Segna dove fa male</button>
       <button class="btn" data-a="dolore-meno">Continuo scendendo meno in profondità</button>`;
-    if (orig.alternativa && !e.alt) h += `<button class="btn primario" data-a="dolore-alt">Per oggi faccio: ${esc(orig.alternativa.nome)}</button>`;
+    if (orig.alternativa && !e.alt) h += `<button class="btn" data-a="dolore-alt">Per oggi faccio: ${esc(orig.alternativa.nome)}</button>`;
     if (e.alt) h += `<button class="btn" data-a="dolore-torna">Torna a ${esc(orig.nome)}</button>`;
     h += `<button class="btn" data-a="chiudi">Chiudi</button>`;
     apriFoglio(h);
@@ -963,7 +1094,49 @@ const AZ = {
     if (!confirm('Sicuro? Consiglio: prima esporta un backup.')) return;
     localStorage.removeItem(CHIAVE); dati = carica(); vai('home');
   },
-  aggiorna() { if (nuovoSW) nuovoSW.postMessage('AGGIORNA'); }
+  aggiorna() { if (nuovoSW) nuovoSW.postMessage('AGGIORNA'); },
+  'applica-cal'(d) {
+    const c = calibra(d.id); if (!c || c.ok) return;
+    const inp = inputDi(d.id);
+    if (c.kg != null) inp.kg = c.kg; else inp.banda = c.banda;
+    salva(); render(); avviso('Prossima serie: ' + (c.kg != null ? fk(c.kg) + ' kg' : imp().elastici[c.banda]));
+  },
+  'nessun-dolore'(d) { S().es[d.id].dolorCheck = 'no'; salva(); render(); },
+  'dolore-mappa'(d) { nd = { es: d.id || idAttuale(), zona: null, tipo: null, intensita: null, quando: QUANDO_DOLORE[0] }; foglioDolore(); },
+  zona(d) { nd.zona = d.zona; foglioDolore(); },
+  nd(d) {
+    nd.nota = $('#nd-nota') ? $('#nd-nota').value : nd.nota;
+    nd[d.c] = d.c === 'intensita' ? +d.v : (d.v || null);
+    foglioDolore();
+  },
+  'salva-dolore'() {
+    nd.nota = ($('#nd-nota') ? $('#nd-nota').value : '').trim();
+    if (!nd.tipo || !nd.intensita) { avviso('Scegli che dolore è e quanto è forte'); return; }
+    const voce = { zona: nd.zona, tipo: nd.tipo, intensita: nd.intensita, quando: nd.quando, nota: nd.nota, t: Date.now() };
+    doloriDi(nd.es).push(voce);
+    if (nd.es !== 'generale') { const e = S().es[nd.es]; e.dolore = true; delete e.dolorCheck; }
+    salva(); render();
+    const base = nd.zona.split('_')[0];
+    const info = nd.es !== 'generale' ? ((SCHEDA.dettagli[idEff(nd.es)] || {}).infortuni || []).find(x => x.zone.includes(base)) : null;
+    const forte = voce.intensita >= 6 || voce.tipo.startsWith('Pungente') || voce.tipo === 'Formicolio';
+    if (info || forte) {
+      const alt = nd.es !== 'generale' && spec(nd.es).alternativa;
+      apriFoglio(`<h2 style="margin:4px 0 8px">💡 Cosa può essere</h2>${info ? `<div>${esc(info.testo)}</div>` : ''}
+        ${forte ? `<div class="banner" style="margin-top:12px">⚠️ Dolore ${voce.intensita >= 6 ? 'forte' : voce.tipo.toLowerCase()}: per oggi non insistere con questo esercizio${alt ? ' (puoi passare all\'esercizio vecchio con «Fa male?»)' : ''}. Se domani c'è ancora, lo guardiamo nell'analisi della settimana.</div>` : ''}
+        <button class="btn primario" style="margin-top:12px" data-a="chiudi">Ho capito</button>`);
+    } else { chiudiFoglio(); avviso('Dolore segnato'); }
+    nd = null;
+  },
+  'elimina-dolore'(d) { doloriDi(d.id).splice(+d.i, 1); salva(); render(); },
+  pesata() {
+    const v = parseFloat(String($('#pesata').value).replace(',', '.'));
+    if (!(v > 20 && v < 300)) { avviso('Scrivi il peso in kg'); return; }
+    const oggi = new Date().toDateString();
+    dati.pesate = dati.pesate.filter(p => new Date(p.t).toDateString() !== oggi);
+    dati.pesate.unshift({ t: Date.now(), kg: v }); dati.profilo.peso = v;
+    salva(); render(); avviso('Peso salvato: ' + fk(v) + ' kg');
+  },
+  'analisi-letta'(d) { const a = dati.analisi.find(x => x.id === d.id); if (a) { a.letta = true; salva(); } vai('stats'); }
 };
 let modifica = { i: 0 }, ultimoSaltato = null;
 
@@ -977,6 +1150,7 @@ document.addEventListener('click', e => {
 document.addEventListener('change', e => {
   const t = e.target;
   if (t.dataset.imp) { const v = parseFloat(String(t.value).replace(',', '.')); if (!isNaN(v) && v >= 0) { imp()[t.dataset.imp] = v; salva(); } }
+  if (t.dataset.prof) { const k = t.dataset.prof; dati.profilo[k] = k === 'obiettivo' ? t.value.trim() : (parseFloat(t.value) || null); salva(); }
   if (t.dataset.impElastico) { imp().elastici[+t.dataset.impElastico] = t.value.trim() || IMP_DEFAULT.elastici[+t.dataset.impElastico]; salva(); }
   if (t.id === 'file-importa' && t.files[0]) importa(t.files[0]);
 });
@@ -984,26 +1158,41 @@ document.addEventListener('change', e => {
 /* ================= BACKUP ================= */
 async function esporta() {
   const oggi = new Date().toISOString().slice(0, 10);
-  const contenuto = JSON.stringify({ app: 'coach-palestra', versione: 1, esportato: new Date().toISOString(), storico: dati.storico, impostazioni: dati.impostazioni }, null, 1);
+  const contenuto = JSON.stringify({ app: 'coach-palestra', tipo: 'backup', versione: 2, esportato: new Date().toISOString(), profilo: dati.profilo, pesate: dati.pesate,
+    scheda: SCHEDA.nome, storico: dati.storico, impostazioni: dati.impostazioni, analisiRicevute: dati.analisi.map(a => a.id), sessioneInCorso: dati.sessione }, null, 1);
+  const fatto = () => { dati.ultimoExport = Date.now(); salva(); if (vista.nome === 'home' || vista.nome === 'impostazioni') render(); };
   const nome = `palestra_${oggi}`;
   const tenta = async (file) => { if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: 'Backup palestra' }); return true; } return false; };
   try {
-    if (await tenta(new File([contenuto], nome + '.json', { type: 'application/json' }))) return;
-    if (await tenta(new File([contenuto], nome + '.txt', { type: 'text/plain' }))) return;
+    if (await tenta(new File([contenuto], nome + '.json', { type: 'application/json' }))) return fatto();
+    if (await tenta(new File([contenuto], nome + '.txt', { type: 'text/plain' }))) return fatto();
   } catch (e) { if (e.name === 'AbortError') return; }
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([contenuto], { type: 'application/json' }));
   a.download = nome + '.json'; a.click();
-  avviso('Backup salvato nei Download');
+  fatto(); avviso('File salvato nei Download');
 }
 async function importa(file) {
   try {
     const d = JSON.parse(await file.text());
+    if (d.app === 'coach-palestra' && d.tipo === 'analisi') return importaAnalisi(d);
     if (d.app !== 'coach-palestra' || !Array.isArray(d.storico)) throw new Error('formato');
     if (!confirm(`Il backup contiene ${d.storico.length} allenamenti. Sostituire i dati attuali (${dati.storico.length} allenamenti)?`)) return;
     dati.storico = d.storico; dati.impostazioni = Object.assign({}, IMP_DEFAULT, d.impostazioni || {});
+    if (d.profilo) dati.profilo = d.profilo;
+    if (d.pesate) dati.pesate = d.pesate;
     salva(); avviso('Backup importato'); vai('home');
   } catch (e) { avviso('Questo file non è un backup di Coach Palestra'); }
+}
+
+function importaAnalisi(d) {
+  d.id = d.id || ('analisi_' + (d.data || new Date().toISOString().slice(0, 10)));
+  dati.analisi = dati.analisi.filter(a => a.id !== d.id);
+  d.letta = false; d.ricevuta = Date.now();
+  dati.analisi.unshift(d);
+  const t = Date.now();
+  for (const [id, v] of Object.entries(d.pesi || {})) if (spec(id)) dati.override[id] = Object.assign({ t }, v);
+  salva(); avviso('Note del coach importate 🧑‍🏫'); vai('stats');
 }
 
 /* ================= SERVICE WORKER (offline + aggiornamenti) ================= */
