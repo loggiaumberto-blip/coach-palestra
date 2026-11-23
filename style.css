@@ -18,9 +18,10 @@ html, body {
   margin: 0; background: var(--sfondo); color: var(--testo);
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   font-size: 17px; line-height: 1.4;
-  overscroll-behavior: none; overflow-x: hidden;
 }
-body { min-height: 100dvh; }
+/* lo scorrimento lo fa la pagina (html); il body non deve diventare un contenitore che scorre */
+html { overflow-y: auto; overscroll-behavior-y: none; height: auto; }
+body { min-height: 100dvh; overflow-x: clip; touch-action: manipulation; }
 button { font: inherit; color: inherit; border: 0; background: none; cursor: pointer; }
 input, textarea, select { font: inherit; color: var(--testo); }
 .num { font-variant-numeric: tabular-nums; }
