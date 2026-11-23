@@ -2,7 +2,7 @@
    Tutto resta sul telefono (localStorage), funziona offline. */
 'use strict';
 
-const VERSIONE_APP = '2.0';
+const VERSIONE_APP = '2.0.2';
 const CHIAVE = 'cp-dati';
 const IMP_DEFAULT = {
   elastici: ['Molto spesso', 'Spesso', 'Medio', 'Sottile', 'Senza elastico'],
@@ -325,7 +325,7 @@ function vHome() {
   const g = prossimoGiorno(), G = SCHEDA.giorni[g];
   const sett = dati.storico.filter(r => r.inizio >= inizioSettimana()).length;
   const ultimo = dati.storico[0];
-  let h = `<div class="testata"><h1>Coach Palestra</h1></div>`;
+  let h = `<div class="testata"><h1>Coach Palestra</h1><button class="tenue piccolo" data-a="ricarica-app" style="padding:8px">v${VERSIONE_APP} 🔄</button></div>`;
   if (S()) {
     const s = S();
     h += `<div class="carta prossimo"><div class="etichetta">Allenamento in corso</div>
@@ -1095,6 +1095,11 @@ const AZ = {
     localStorage.removeItem(CHIAVE); dati = carica(); vai('home');
   },
   aggiorna() { if (nuovoSW) nuovoSW.postMessage('AGGIORNA'); },
+  async 'ricarica-app'() {
+    // cancella solo i file dell'app in memoria (i tuoi allenamenti restano) e riscarica tutto
+    try { for (const g of await navigator.serviceWorker.getRegistrations()) await g.unregister(); for (const k of await caches.keys()) await caches.delete(k); } catch (e) { /* niente */ }
+    location.reload();
+  },
   'applica-cal'(d) {
     const c = calibra(d.id); if (!c || c.ok) return;
     const inp = inputDi(d.id);
