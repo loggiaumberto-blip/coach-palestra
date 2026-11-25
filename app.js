@@ -2,11 +2,12 @@
    Tutto resta sul telefono (localStorage), funziona offline. */
 'use strict';
 
-const VERSIONE_APP = '2.0.2';
+const VERSIONE_APP = '2.1.0';
 const CHIAVE = 'cp-dati';
 const IMP_DEFAULT = {
   elastici: ['Molto spesso', 'Spesso', 'Medio', 'Sottile', 'Senza elastico'],
   bilanciere: 20, trapbar: 25,
+  saltoBilanciere: 5, saltoMacchina: 5,
   suono: true, vibrazione: true, voce: false
 };
 
@@ -23,6 +24,7 @@ function carica() {
   d.pesate = d.pesate || [];
   d.analisi = d.analisi || [];
   d.override = d.override || {};
+  d.modifiche = d.modifiche || {}; // serie / ripetizioni / recupero cambiati dal coach (restano finché non li cambia di nuovo)
   return d;
 }
 function salva() {
@@ -62,9 +64,20 @@ function inizioSettimana() {
   d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
   return d.getTime();
 }
-function spec(id) { return SCHEDA.esercizi[id] || SCHEDA.alternative[id]; }
+const CAMPI_SCHEDA = ['serie', 'ripMin', 'ripMax', 'recupero'];
+function spec(id) {
+  const base = SCHEDA.esercizi[id] || SCHEDA.alternative[id];
+  const m = base && dati.modifiche[id];
+  return m ? Object.assign({}, base, m) : base;
+}
 function ripTxt(s) { return (s.ripMin === s.ripMax ? s.ripMin : s.ripMin + '–' + s.ripMax) + (s.ripNota ? ' ' + s.ripNota : ''); }
 function recTxt(sec) { return sec >= 60 ? (Math.floor(sec / 60) + "'" + (sec % 60 ? (sec % 60) + '"' : '')) : sec + '"'; }
+/* Il salto di peso più piccolo che si può fare con quell'attrezzo (dischi della palestra, pacco pesi) */
+function passoDi(s) {
+  if (s.carico || s.attrezzo === 'bilanciere' || s.attrezzo === 'trap bar') return +imp().saltoBilanciere || s.passo;
+  if (s.attrezzo === 'macchina' || s.attrezzo === 'cavo') return +imp().saltoMacchina || s.passo;
+  return s.passo;
+}
 function pesoBarra(s) { return s.carico === 'trapbar' ? +imp().trapbar : s.carico === 'bilanciere' ? +imp().bilanciere : 0; }
 
 /* ================= STORICO E PROGRESSIONE ================= */
@@ -90,13 +103,15 @@ function valuta(rif, s) {
   const deficit = rif.reduce((a, x) => a + Math.max(0, s.ripMin - x.rip), 0);
   const completo = rif.length >= s.serie && rif.every(x => x.rip >= s.ripMax);
   const duro = rif.some(x => x.sens === 'duro');
+  const duriTanti = rif.filter(x => x.sens === 'duro').length > rif.length / 2;
+  const oltre = rif.some(x => x.rip >= s.ripMax + 2);           // almeno una serie ben oltre il massimo
   const moltoFacile = rif.every(x => x.sens === 'facile') || rif.every(x => x.rip >= s.ripMax + 3);
-  return { deficit, completo, duro, moltoFacile };
+  return { deficit, completo, duro, duriTanti, oltre, moltoFacile };
 }
 /* Un «passo» di peso: manubri 1–2 kg, bilancieri e macchine come da scheda */
 function passoPeso(s, kg, dir) {
   if (s.attrezzo === 'manubri') return (dir > 0 ? kg >= 10 : kg > 10) ? 2 : 1;
-  return s.incremento || s.passo || 2.5;
+  return passoDi(s) || 2.5;
 }
 const RIR = { facile: 4, giusto: 2, duro: 0.5 };
 /* Durante l'allenamento: dalla serie appena fatta stima il peso giusto per la prossima */
@@ -109,18 +124,20 @@ function calibra(id) {
     if (rir == null) { if (x.rip < s.ripMin) rir = 0; else return null; }
     const e1 = x.kg * (1 + (x.rip + rir) / 30);                       // forza stimata
     const obiettivo = e1 / (1 + (s.ripMax + (primeSettimane() ? 2.5 : 2)) / 30);
-    const tondo = s.attrezzo === 'manubri' ? (obiettivo >= 4 ? 1 : 0.5) : s.passo;
+    const tondo = s.attrezzo === 'manubri' ? (obiettivo >= 4 ? 1 : 0.5) : passoDi(s);
     let k = Math.max(0, Math.round(obiettivo / tondo) * tondo);
     const passo = passoPeso(s, x.kg, Math.sign(k - x.kg) || 1);
     k = Math.min(x.kg + 3 * passo, Math.max(x.kg - 3 * passo, k));
     if (Math.abs(k - x.kg) < passo * 0.75) return { ok: true, testo: 'Peso giusto: tienilo così ✓' };
+    // se le ripetizioni le hai fatte tutte, non si scende: al limite va bene
+    if (k < x.kg && x.rip >= s.ripMin) return { ok: true, testo: 'Al limite ma le hai fatte tutte: tieni questo peso ✓' };
     if (k === inp.kg) return { ok: true, testo: `Prossima serie a ${fk(k)} kg ✓` };
     return { kg: k, su: k > x.kg, testo: k > x.kg ? `Era facile: per la prossima serie prova ${fk(k)} kg` : `Troppo pesante: per la prossima serie scendi a ${fk(k)} kg` };
   }
   if (s.tipo === 'elastico') {
     const b = imp().elastici, bi = x.banda ?? 0;
     if (x.sens === 'facile' && x.rip >= s.ripMax && bi < b.length - 1 && inp.banda === bi) return { banda: bi + 1, su: true, testo: `Era facile: prova «${b[bi + 1]}»` };
-    if ((x.rip < s.ripMin || (x.sens === 'duro' && x.rip < s.ripMax)) && bi > 0 && inp.banda === bi) return { banda: bi - 1, su: false, testo: `Troppo dura: passa a «${b[bi - 1]}», più spesso` };
+    if (x.rip < s.ripMin && bi > 0 && inp.banda === bi) return { banda: bi - 1, su: false, testo: `Troppo dura: passa a «${b[bi - 1]}», più spesso` };
   }
   return null;
 }
@@ -145,15 +162,14 @@ function suggerisci(id, storico = dati.storico) {
     const v = valuta(rif, s);
     const base = `Ultima volta (${quando}): ${serieTxt(last.serie, s)}.`;
     const cambia = n => { let k = kgRif; for (let i = 0; i < Math.abs(n); i++) k = Math.max(0, k + Math.sign(n) * passoPeso(s, k, Math.sign(n))); return k; };
-    if (v.completo && v.moltoFacile) { const k = s.incFacile ? kgRif + s.incFacile : cambia(2); return { kg: k, msg: `${base} Tutte complete e facili → sali di ${fk(k - kgRif)} kg.`, cl: 'su' }; }
+    // Regole (riviste dopo il primo allenamento): se completi tutte le serie il peso non scende mai.
+    if (v.completo && v.moltoFacile) { const k = s.incFacile ? kgRif + Math.max(s.incFacile, passoPeso(s, kgRif, 1)) : cambia(2); return { kg: k, msg: `${base} Tutte complete e facili → sali di ${fk(k - kgRif)} kg.`, cl: 'su' }; }
     if (v.completo && !v.duro) { const k = cambia(1); return { kg: k, msg: `${base} Tutte complete → sali di ${fk(k - kgRif)} kg.`, cl: 'su' }; }
-    if (v.completo && v.duro) {
-      if (primeSettimane()) { const k = cambia(-1); return { kg: k, msg: `${base} Complete ma al limite: nelle prime 2 settimane scendi a ${fk(k)} kg.`, cl: 'giu' }; }
-      return { kg: kgRif, msg: `${base} Complete ma al limite: resta a ${fk(kgRif)} kg finché non le chiudi con margine.`, cl: '' };
-    }
+    if (v.completo && v.oltre && !v.duriTanti) { const k = cambia(1); return { kg: k, msg: `${base} Complete e sei andato oltre le ${s.ripMax} ripetizioni → sali di ${fk(k - kgRif)} kg.`, cl: 'su' }; }
+    if (v.completo) return { kg: kgRif, msg: `${base} Complete, ma ${v.duriTanti ? 'quasi tutte' : "l'ultima"} al limite: resta a ${fk(kgRif)} kg. Quando le chiudi tutte senza «al limite», sali.`, cl: '' };
     if (v.deficit === 0) return { kg: kgRif, msg: rif.length < s.serie ? `${base} Hai trovato il peso: rifai tutte le serie a ${fk(kgRif)} kg.` : `${base} Resta a ${fk(kgRif)} kg e arriva a ${s.ripMax} in tutte le serie.`, cl: '' };
-    if (v.deficit <= 2) return { kg: kgRif, msg: `${base} Ti sono mancate ${v.deficit} ripetizioni: riprova a ${fk(kgRif)} kg.`, cl: '' };
-    if (v.deficit <= s.serie * 2) { const k = cambia(-1); return { kg: k, msg: `${base} Ti sono mancate ${v.deficit} ripetizioni → scendi a ${fk(k)} kg.`, cl: 'giu' }; }
+    if (v.deficit <= Math.max(2, rif.length)) return { kg: kgRif, msg: `${base} Ti sono mancate ${v.deficit} ripetizioni: riprova a ${fk(kgRif)} kg.`, cl: '' };
+    if (v.deficit <= rif.length * 3) { const k = cambia(-1); return { kg: k, msg: `${base} Ti sono mancate ${v.deficit} ripetizioni → scendi a ${fk(k)} kg.`, cl: 'giu' }; }
     const k = cambia(-2);
     return { kg: k, msg: `${base} Peso troppo alto (mancate ${v.deficit} ripetizioni) → scendi a ${fk(k)} kg.`, cl: 'giu' };
   }
@@ -211,7 +227,8 @@ function dischi(kg, s) {
   const barra = pesoBarra(s);
   let lato = (kg - barra) / 2;
   if (lato <= 0) return '';
-  const pezzi = [], dischiDisp = [20, 15, 10, 5, 2.5, 1.25];
+  const minimo = (+imp().saltoBilanciere || 2.5) / 2 - 0.001;
+  const pezzi = [], dischiDisp = [20, 15, 10, 5, 2.5, 1.25].filter(d => d >= minimo);
   for (const d of dischiDisp) while (lato >= d - 0.001) { pezzi.push(d); lato -= d; }
   const resto = lato > 0.01 ? ' (circa)' : '';
   return `per lato ${pezzi.map(fk).join(' + ')}${resto} (${s.carico === 'trapbar' ? 'trap bar' : 'bilanciere'} ${fk(barra)})`;
@@ -219,7 +236,7 @@ function dischi(kg, s) {
 function avvicinamento(kg, s) {
   const barra = pesoBarra(s);
   if (kg - barra < 10) return `1 serie leggera ×8 prima di partire.`;
-  const passi = [[barra, 8], [arrot(kg * 0.5, 2.5), 5], [arrot(kg * 0.75, 2.5), 3]]
+  const passi = [[barra, 8], [arrot(kg * 0.5, passoDi(s)), 5], [arrot(kg * 0.75, passoDi(s)), 3]]
     .filter(([k], i, a) => k >= barra && k < kg && (i === 0 || k > a[i - 1][0]));
   return passi.map(([k, r]) => `${fk(k)} kg ×${r}`).join(' · ');
 }
@@ -307,7 +324,7 @@ function render() {
   const conNav = ['home', 'storico', 'stats', 'guida', 'impostazioni'].includes(v);
   app.innerHTML = html + (conNav ? navbar(v) : '');
   tick(true);
-  ANIM.avvia();
+  ANIM.avvia(); ANIM.inquadra();
 }
 function navbar(attivo) {
   const b = (n, ic, t) => `<button data-a="nav" data-v="${n}" class="${attivo === n ? 'attivo' : ''}"><span>${ic}</span>${t}</button>`;
@@ -357,19 +374,47 @@ function vHome() {
 }
 
 /* ---------- ANTEPRIMA ---------- */
+function ultimaBreve(id) {
+  const st = storiaDi(id)[0], s = spec(id);
+  if (!st) return '';
+  const se = st.serie;
+  if (s.tipo === 'kg' && se.every(x => x.kg === se[0].kg)) return `${fk(se[0].kg)} kg × ${se.map(x => x.rip).join(' · ')}`;
+  return serieTxt(se, s);
+}
+function minutiGiorno(g) {
+  const sec = SCHEDA.giorni[g].esercizi.reduce((a, id) => { const s = spec(id); return a + s.serie * (45 + s.recupero); }, 0);
+  return Math.round((sec / 60 + 15) / 5) * 5;
+}
 function vAnteprima(g) {
   const G = SCHEDA.giorni[g];
-  let h = `<div class="testata"><button class="indietro" data-a="nav" data-v="home">‹</button><h1>Giorno ${g} – ${esc(G.nome)}</h1></div>
-    <div class="carta"><ul class="es-lista">
-    <li><span class="n">🔥</span><span class="cresci">Riscaldamento + mobilità</span><span class="obiettivo tenue">10' + 5'</span></li>`;
+  const serieTot = G.esercizi.reduce((a, id) => a + spec(id).serie, 0);
+  const gruppi = [...new Set(G.esercizi.map(id => (SCHEDA.dettagli[id] || {}).gruppo).filter(Boolean))];
+  const ul = dati.storico.find(r => r.giorno === g);
+  let h = `<div class="testata"><button class="indietro" data-a="nav" data-v="home">‹</button><h1>Giorno ${g}</h1></div>
+    <div class="ant-hero"><span class="lettera grande">${g}</span><div class="cresci">
+      <div class="titolo">${esc(G.nome)}</div>
+      <div class="tenue piccolo">${G.esercizi.length} esercizi · ${serieTot} serie · circa ${minutiGiorno(g)} min</div>
+      <div class="tenue piccolo">${ul ? 'ultima volta ' + giorniFa(ul.inizio) : 'prima volta'}</div></div></div>
+    <div class="chip-riga ant-gruppi">${gruppi.map(x => `<span class="chip">${esc(x)}</span>`).join('')}</div>
+    <div class="ant-es risc"><div class="ant-foto">🔥</div><div class="cresci"><b>Riscaldamento</b><div class="tenue piccolo">10' cardio + 5' mobilità</div></div></div>`;
   G.esercizi.forEach((id, i) => {
-    const s = spec(id), sg = suggerisci(id);
-    h += `<li><span class="n">${i + 1}</span><span class="cresci">${esc(s.nome)}${s.nuovo ? '<span class="nuovo">NUOVO</span>' : ''}<br>
-      <span class="tenue piccolo">recupero ${recTxt(s.recupero)}</span></span><span class="obiettivo">${obiettivoTxt(id, sg)}</span></li>`;
+    const s = spec(id), sg = suggerisci(id), det = SCHEDA.dettagli[id] || {};
+    const foto = det.anim && det.anim.length ? ANIM.foto(det.anim[0]) : '';
+    const coach = dati.modifiche[id] ? ' <small>🧑‍🏫</small>' : '';
+    const serieRip = s.tipo === 'circuito' ? `${s.serie}–${s.serieMax} giri` : s.tipo === 'superset' ? `${s.serie} giri` : `${s.serie} × ${s.ripMin === s.ripMax ? s.ripMin : s.ripMin + '–' + s.ripMax}`;
+    const carico = s.tipo === 'kg' ? `${fk(sg.kg)} kg` : s.tipo === 'elastico' ? (imp().elastici[sg.banda] || '') : s.tipo === 'superset' ? `${fk(sg.parti[0].kg)} / ${fk(sg.parti[1].kg)} kg` : '';
+    const freccia = sg.cl === 'su' ? '<span class="su">⬆</span>' : sg.cl === 'giu' ? '<span class="giu">⬇</span>' : '';
+    const ultima = ultimaBreve(id);
+    h += `<button class="ant-es" data-a="anteprima-es" data-id="${id}">
+      <div class="ant-foto">${foto}</div>
+      <div class="cresci"><div class="ant-nome"><span class="ant-n">${i + 1}</span>${esc(s.nome)}${s.nuovo ? '<span class="nuovo">NUOVO</span>' : ''}</div>
+        <div class="ant-pill"><span>${serieRip}${s.ripNota ? ' <small>' + esc(s.ripNota) + '</small>' : ''}${coach}</span>${carico ? `<span class="carico">${esc(carico)} ${freccia}</span>` : ''}</div>
+        <div class="tenue piccolo">⏱ ${recTxt(s.recupero)}${ultima ? ' · ultima: ' + esc(ultima) : ''}</div></div>
+      <span class="tenue">›</span></button>`;
   });
-  h += `</ul></div>`;
+  h += `<div class="tenue piccolo" style="text-align:center;margin:6px 0 90px">Tocca un esercizio per vedere come si fa.</div>`;
   if (S()) h += `<div class="banner">C'è già un allenamento in corso (giorno ${S().giorno}). Iniziandone uno nuovo, quello viene chiuso e salvato.</div>`;
-  h += `<button class="btn primario enorme" data-a="inizia" data-g="${g}">Inizia allenamento</button>`;
+  h += `<div class="ant-via"><button class="btn primario enorme" data-a="inizia" data-g="${g}">▶ Inizia allenamento</button></div>`;
   return h;
 }
 
@@ -520,7 +565,8 @@ function vEsercizio() {
     }).join('') + '</div>';
   }
 
-  h += `<div class="azioni-sec"><button data-a="tecnica">📖 Come si fa</button><button data-a="dolore">🤕 Fa male?</button>`;
+  if (e.nota) h += `<button class="nota-es" data-a="nota-es" data-id="${id}">📝 ${esc(e.nota)}</button>`;
+  h += `<div class="azioni-sec"><button data-a="tecnica">📖 Come si fa</button><button data-a="dolore">🤕 Fa male?</button><button data-a="nota-es" data-id="${id}">📝 Nota</button>`;
   if (!finito) h += `<button data-a="salta">⏭ Salta</button>`;
   h += `<button data-a="elenco">🔀 Altro esercizio</button></div>`;
   return h;
@@ -544,8 +590,20 @@ function foglioDolore() {
   if (!nd.zona) {
     const scelte = {};
     for (const d of doloriDi(nd.es)) scelte[d.zona] = '#fb923c';
-    apriFoglio(`<h2 style="margin:4px 0 4px">🤕 Dove senti dolore?</h2><div class="tenue piccolo">Tocca la zona. Nel disegno «davanti» la tua destra è a sinistra, come allo specchio.</div>
-      ${CORPO.doppia({ cliccabile: true, scelte })}<button class="btn" data-a="chiudi">Annulla</button>`);
+    if (!nd.macro) { // 1. quale parte del corpo
+      apriFoglio(`<h2 style="margin:4px 0 4px">🤕 Dove senti dolore?</h2><div class="tenue piccolo">Tocca la parte del corpo: poi la vedi da vicino e scegli il punto preciso.</div>
+        ${CORPO.doppia({ modo: 'macro', scelte })}
+        <div class="chip-riga">${CORPO.MACRO_LISTA.map(m => `<button class="chip" data-a="macro" data-macro="${m}">${esc(CORPO.macroCorto(m))}</button>`).join('')}</div>
+        <button class="btn" data-a="chiudi">Annulla</button>`);
+      return;
+    }
+    // 2. la parte da vicino: il punto preciso
+    apriFoglio(`<h2 style="margin:4px 0 0">${esc(CORPO.macroNome(nd.macro))}</h2><button class="link" data-a="macro" data-macro="">‹ tutto il corpo</button>
+      ${CORPO.zoom(nd.macro, { scelte, sel: nd.zonaTmp, anima: nd.anima })}
+      <div class="zona-scelta" id="zona-scelta">${nd.zonaTmp ? esc(CORPO.nome(nd.zonaTmp)) : 'Tocca il punto preciso'}</div>
+      <div class="chip-riga">${CORPO.zoneDi(nd.macro).map(z => `<button class="chip ${z.id === nd.zonaTmp ? 'scelto' : ''}" data-a="zona-tmp" data-zona="${z.id}">${esc(z.nome)}</button>`).join('')}</div>
+      <button class="btn primario" id="zona-ok" data-a="zona-ok"${nd.zonaTmp ? '' : ' disabled'}>Continua ›</button><button class="btn" data-a="chiudi">Annulla</button>`);
+    if (nd.anima) { nd.anima = false; CORPO.anima($('#foglio')); }
     return;
   }
   const chip = (campo, val, testo) => `<button class="chip ${String(nd[campo]) === String(val) ? 'scelto' : ''}" data-a="nd" data-c="${campo}" data-v="${esc(val)}">${esc(testo)}</button>`;
@@ -592,6 +650,8 @@ function vRiposo() {
 
   if (!finito) h += cartaCalibra(id);
   else h += cartaDolori(id);
+  h += e.nota ? `<button class="nota-es" data-a="nota-es" data-id="${id}">📝 ${esc(e.nota)}</button>`
+    : `<div class="azioni-sec" style="margin-top:6px"><button data-a="nota-es" data-id="${id}">📝 Scrivi una nota su questo esercizio</button></div>`;
 
   // cosa viene dopo
   h += `<div class="prossima">`;
@@ -636,6 +696,7 @@ function recordSessione(note) {
     if (e.dolore) esercizi[eid].dolore = true;
     if (e.dolori && e.dolori.length) esercizi[eid].dolori = e.dolori.map(d => Object.assign({}, d));
     if (e.dolorCheck === 'no') esercizi[eid].nessunDolore = true;
+    if (e.nota) esercizi[eid].nota = e.nota;
   }
   return { id: 'w' + se.inizio, giorno: se.giorno, inizio: se.inizio, fine: Date.now(), esercizi, dolori: (se.doloriGenerali || []).slice(), note: note || '' };
 }
@@ -718,6 +779,8 @@ function vDettaglio(id) {
       <span class="num" style="text-align:right">${e.serie.length ? esc(serieTxt(e.serie, s)) + (s.tipo === 'elastico' ? '<br><span class="tenue piccolo">' + esc(imp().elastici[e.serie[0].banda] || '') + '</span>' : '') : '<span class="tenue">saltato</span>'}</span></div>`;
   }
   h += `</div>`;
+  const conNota = Object.values(r.esercizi).filter(e => e.nota);
+  if (conNota.length) h += `<div class="carta"><h2>📝 Note sugli esercizi</h2>${conNota.map(e => `<div class="voce"><span><b>${esc(e.nome)}</b><br><span class="piccolo">${esc(e.nota)}</span></span></div>`).join('')}</div>`;
   const dol = [...Object.values(r.esercizi).flatMap(e => (e.dolori || []).map(d => [e.nome, d])), ...(r.dolori || []).map(d => ['In generale', d])];
   if (dol.length) h += `<div class="carta"><h2>🤕 Dolori</h2>${dol.map(([n, d]) => `<div class="voce"><span>${rigaDolore(d)}<br><span class="tenue piccolo">${esc(n)}</span></span></div>`).join('')}</div>`;
   if (r.note) h += `<div class="carta"><h2>Note</h2>${esc(r.note).replace(/\n/g, '<br>')}</div>`;
@@ -817,11 +880,16 @@ function vImpostazioni() {
     <div class="carta"><h2>Bilancieri</h2><div class="tenue piccolo">Servono per dirti quanti dischi mettere per lato. Metti 0 se il peso che segni è solo quello dei dischi.</div>
       <div class="campo"><span>Bilanciere olimpico (kg)</span><input type="number" inputmode="decimal" data-imp="bilanciere" value="${i.bilanciere}"></div>
       <div class="campo"><span>Trap bar (kg)</span><input type="number" inputmode="decimal" data-imp="trapbar" value="${i.trapbar}"></div></div>
+    <div class="carta"><h2>Salti di peso</h2><div class="tenue piccolo">Il salto più piccolo che puoi fare nella tua palestra. Bilanciere: 2 × il disco più piccolo (dischi da 2,5 → 5 kg). Macchine e cavi: di quanto sale il pacco pesi. I manubri vanno da 1 a 2 kg.</div>
+      <div class="campo"><span>Bilanciere e trap bar (kg)</span><input type="number" inputmode="decimal" data-imp="saltoBilanciere" value="${i.saltoBilanciere}"></div>
+      <div class="campo"><span>Macchine e cavi (kg)</span><input type="number" inputmode="decimal" data-imp="saltoMacchina" value="${i.saltoMacchina}"></div></div>
     <div class="carta"><h2>📤 Export e analisi</h2><div class="tenue piccolo">I dati stanno solo su questo telefono. Ogni settimana: <b>Esporta</b> → «Salva su Drive» (cartella Palestra) → chiedi a Claude l'analisi. Claude ti rimanda un file <i>analisi_…json</i>: aprilo con <b>Importa</b> e lo trovi in Statistiche.</div>
       <button class="btn" style="margin-top:10px" data-a="esporta">📤 Esporta i dati</button>
       <button class="btn" data-a="importa">📥 Importa (analisi del coach o backup)</button>
       ${dati.ultimoExport ? `<div class="tenue piccolo" style="margin-top:8px">Ultimo export: ${dataTxt(dati.ultimoExport)}</div>` : ''}
       <input type="file" id="file-importa" accept=".json,application/json,text/plain" class="nascosto"></div>
+    ${Object.keys(dati.modifiche).length ? `<div class="carta"><h2>🧑‍🏫 Modifiche del coach alla scheda</h2>${Object.entries(dati.modifiche).map(([id, m]) => { const s = spec(id); return `<div class="voce"><span><b>${esc(s.nome)}</b> – ${s.serie}×${ripTxt(s)}, recupero ${recTxt(s.recupero)}${m.motivo ? `<br><span class="tenue piccolo">${esc(m.motivo)}</span>` : ''}</span></div>`; }).join('')}
+      <button class="btn" style="margin-top:10px" data-a="togli-modifiche">Torna alla scheda originale</button></div>` : ''}
     <div class="carta"><h2>Regole della scheda</h2><div class="piccolo">${esc(SCHEDA.regole.progressione)}</div><div class="piccolo" style="margin-top:8px">${esc(SCHEDA.regole.dolore)}</div></div>
     <button class="btn pericolo" data-a="cancella-tutto">Cancella tutti i dati</button>
     <div class="tenue piccolo" style="text-align:center;margin:16px 0">Coach Palestra ${VERSIONE_APP}</div>`;
@@ -961,13 +1029,13 @@ const AZ = {
   'risc-fine'() { const se = S(); se.fase = 'esercizio'; se.idx = se.ordine.findIndex(id => se.es[id].stato === 'da fare'); if (se.idx < 0) se.idx = 0; salva(); render(); window.scrollTo(0, 0); },
   passo(d) {
     const se = S(), id = idAttuale(), s = spec(idEff(id)), inp = inputDi(id), dir = +d.d;
-    if (d.c === 'kg') inp.kg = Math.max(0, Math.round((inp.kg + dir * s.passo) * 100) / 100);
+    if (d.c === 'kg') inp.kg = Math.max(0, Math.round((inp.kg + dir * passoDi(s)) * 100) / 100);
     else if (d.c === 'rip') inp.rip = Math.max(0, inp.rip + dir);
     else if (d.c.startsWith('pkg')) { const i = +d.c.slice(3); inp.parti[i].kg = Math.max(0, Math.round((inp.parti[i].kg + dir * s.parti[i].passo) * 100) / 100); }
     else if (d.c.startsWith('prip')) { const i = +d.c.slice(4); inp.parti[i].rip = Math.max(0, inp.parti[i].rip + dir); }
     else if (d.c === 'mkg' || d.c === 'mrip') { // modifica serie
       const x = se.es[id].serie[modifica.i];
-      if (d.c === 'mkg') x.kg = Math.max(0, Math.round((x.kg + dir * s.passo) * 100) / 100); else x.rip = Math.max(0, x.rip + dir);
+      if (d.c === 'mkg') x.kg = Math.max(0, Math.round((x.kg + dir * passoDi(s)) * 100) / 100); else x.rip = Math.max(0, x.rip + dir);
       salva(); AZ['modifica-serie']({ i: modifica.i }); render(); return;
     }
     salva(); render();
@@ -1033,6 +1101,7 @@ const AZ = {
     if (e.serie.length < serieTot(id)) e.stato = 'da fare';
     chiudiFoglio(); salva(); render();
   },
+  'anteprima-es'(d) { const s = spec(d.id); apriFoglio(`<h2 style="margin:4px 0 8px">${esc(s.nome)}</h2>${htmlTecnica(d.id)}<button class="btn" style="margin-top:14px" data-a="chiudi">Chiudi</button>`); },
   tecnica() {
     const eid = idEff(idAttuale()), s = spec(eid);
     apriFoglio(`<h2 style="margin:4px 0 8px">${esc(s.nome)}</h2>${htmlTecnica(eid)}<button class="btn" style="margin-top:14px" data-a="chiudi">Chiudi</button>`);
@@ -1106,9 +1175,26 @@ const AZ = {
     if (c.kg != null) inp.kg = c.kg; else inp.banda = c.banda;
     salva(); render(); avviso('Prossima serie: ' + (c.kg != null ? fk(c.kg) + ' kg' : imp().elastici[c.banda]));
   },
+  'nota-es'(d) {
+    const id = d.id || idAttuale(), e = S().es[id];
+    apriFoglio(`<h2 style="margin:4px 0 4px">📝 Nota – ${esc(spec(idEff(id)).nome)}</h2><div class="tenue piccolo">Sensazioni, macchina, regolazioni, dove lo senti… Finisce nell'export per l'analisi.</div>
+      <textarea id="nota-es" placeholder="es. sento più il ginocchio che il quadricipite, fiatone a fine serie, sedile al buco 4…">${esc(e.nota || '')}</textarea>
+      <button class="btn primario" style="margin-top:10px" data-a="salva-nota" data-id="${id}">Salva</button><button class="btn" data-a="chiudi">Annulla</button>`);
+    setTimeout(() => $('#nota-es')?.focus(), 50);
+  },
+  'salva-nota'(d) { S().es[d.id].nota = $('#nota-es').value.trim(); salva(); chiudiFoglio(); render(); avviso('Nota salvata'); },
   'nessun-dolore'(d) { S().es[d.id].dolorCheck = 'no'; salva(); render(); },
-  'dolore-mappa'(d) { nd = { es: d.id || idAttuale(), zona: null, tipo: null, intensita: null, quando: QUANDO_DOLORE[0] }; foglioDolore(); },
-  zona(d) { nd.zona = d.zona; foglioDolore(); },
+  'dolore-mappa'(d) { nd = { es: d.id || idAttuale(), macro: null, zonaTmp: null, zona: null, tipo: null, intensita: null, quando: QUANDO_DOLORE[0] }; foglioDolore(); },
+  macro(d) { if (!nd) return; nd.macro = d.macro || null; nd.zonaTmp = null; nd.anima = !!d.macro; foglioDolore(); },
+  'zona-tmp'(d) {
+    nd.zonaTmp = d.zona;
+    const f = $('#foglio');
+    CORPO.evidenzia(f, d.zona);
+    f.querySelectorAll('.chip[data-zona]').forEach(c => c.classList.toggle('scelto', c.dataset.zona === d.zona));
+    $('#zona-scelta').textContent = CORPO.nome(d.zona);
+    $('#zona-ok').disabled = false;
+  },
+  'zona-ok'() { if (!nd.zonaTmp) return; nd.zona = nd.zonaTmp; foglioDolore(); },
   nd(d) {
     nd.nota = $('#nd-nota') ? $('#nd-nota').value : nd.nota;
     nd[d.c] = d.c === 'intensita' ? +d.v : (d.v || null);
@@ -1121,7 +1207,7 @@ const AZ = {
     doloriDi(nd.es).push(voce);
     if (nd.es !== 'generale') { const e = S().es[nd.es]; e.dolore = true; delete e.dolorCheck; }
     salva(); render();
-    const base = nd.zona.split('_')[0];
+    const base = CORPO.gruppo(nd.zona);
     const info = nd.es !== 'generale' ? ((SCHEDA.dettagli[idEff(nd.es)] || {}).infortuni || []).find(x => x.zone.includes(base)) : null;
     const forte = voce.intensita >= 6 || voce.tipo.startsWith('Pungente') || voce.tipo === 'Formicolio';
     if (info || forte) {
@@ -1141,6 +1227,7 @@ const AZ = {
     dati.pesate.unshift({ t: Date.now(), kg: v }); dati.profilo.peso = v;
     salva(); render(); avviso('Peso salvato: ' + fk(v) + ' kg');
   },
+  'togli-modifiche'() { if (!confirm('Tornare a serie e ripetizioni della scheda originale?')) return; dati.modifiche = {}; salva(); render(); },
   'analisi-letta'(d) { const a = dati.analisi.find(x => x.id === d.id); if (a) { a.letta = true; salva(); } vai('stats'); }
 };
 let modifica = { i: 0 }, ultimoSaltato = null;
@@ -1164,7 +1251,7 @@ document.addEventListener('change', e => {
 async function esporta() {
   const oggi = new Date().toISOString().slice(0, 10);
   const contenuto = JSON.stringify({ app: 'coach-palestra', tipo: 'backup', versione: 2, esportato: new Date().toISOString(), profilo: dati.profilo, pesate: dati.pesate,
-    scheda: SCHEDA.nome, storico: dati.storico, impostazioni: dati.impostazioni, analisiRicevute: dati.analisi.map(a => a.id), sessioneInCorso: dati.sessione }, null, 1);
+    scheda: SCHEDA.nome, storico: dati.storico, impostazioni: dati.impostazioni, modifiche: dati.modifiche, override: dati.override, analisiRicevute: dati.analisi.map(a => a.id), sessioneInCorso: dati.sessione }, null, 1);
   const fatto = () => { dati.ultimoExport = Date.now(); salva(); if (vista.nome === 'home' || vista.nome === 'impostazioni') render(); };
   const nome = `palestra_${oggi}`;
   const tenta = async (file) => { if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: 'Backup palestra' }); return true; } return false; };
@@ -1186,6 +1273,8 @@ async function importa(file) {
     dati.storico = d.storico; dati.impostazioni = Object.assign({}, IMP_DEFAULT, d.impostazioni || {});
     if (d.profilo) dati.profilo = d.profilo;
     if (d.pesate) dati.pesate = d.pesate;
+    if (d.modifiche) dati.modifiche = d.modifiche;
+    if (d.override) dati.override = d.override;
     salva(); avviso('Backup importato'); vai('home');
   } catch (e) { avviso('Questo file non è un backup di Coach Palestra'); }
 }
@@ -1196,7 +1285,14 @@ function importaAnalisi(d) {
   d.letta = false; d.ricevuta = Date.now();
   dati.analisi.unshift(d);
   const t = Date.now();
-  for (const [id, v] of Object.entries(d.pesi || {})) if (spec(id)) dati.override[id] = Object.assign({ t }, v);
+  // pesi: kg / banda valgono per la prossima volta; serie, ripetizioni e recupero cambiano la scheda finché il coach non li ricambia
+  for (const blocco of [d.pesi || {}, d.scheda || {}]) for (const [id, v] of Object.entries(blocco)) {
+    if (!spec(id)) continue;
+    const mod = {};
+    for (const k of CAMPI_SCHEDA) if (typeof v[k] === 'number' && v[k] > 0) mod[k] = v[k];
+    if (Object.keys(mod).length) dati.modifiche[id] = Object.assign({}, dati.modifiche[id], mod, { motivo: v.motivo || '', t });
+    if (v.kg != null || v.banda != null) dati.override[id] = Object.assign({ t }, { kg: v.kg, banda: v.banda, motivo: v.motivo });
+  }
   salva(); avviso('Note del coach importate 🧑‍🏫'); vai('stats');
 }
 

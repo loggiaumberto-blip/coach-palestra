@@ -274,6 +274,23 @@ const ANIM = (() => {
       });
       if (!inCorso && attive.size) { inCorso = true; requestAnimationFrame(giro); }
     },
+    /* immagine ferma a metà movimento (per le anteprime) */
+    foto(id, k = 0.6) {
+      const def = ES[id]; if (!def) return '';
+      const posa = interpola(def.A, def.B, k);
+      return `<svg class="anim-foto" viewBox="0 -22 240 222" aria-hidden="true"><line x1="0" y1="${PAV}" x2="240" y2="${PAV}" stroke="#2f3d37" stroke-width="2"/><g class="fig">${def.fronte ? disegnaFronte(def, posa) : disegnaLato(def, posa)}</g></svg>`;
+    },
+    /* stringe le immagini ferme attorno all'omino (dopo averle messe nella pagina) */
+    inquadra() {
+      document.querySelectorAll('svg.anim-foto:not([data-ok])').forEach(svg => {
+        try {
+          const b = svg.querySelector('g.fig').getBBox(); if (!b.width) return;
+          const lato = Math.max(b.width, b.height) + 18, cx = b.x + b.width / 2, cy = b.y + b.height / 2;
+          svg.setAttribute('viewBox', `${(cx - lato / 2).toFixed(1)} ${(cy - lato / 2).toFixed(1)} ${lato.toFixed(1)} ${lato.toFixed(1)}`);
+          svg.dataset.ok = 1;
+        } catch (e) { /* nascosto */ }
+      });
+    },
     elenco: () => Object.keys(ES),
     prova(id, k) { const def = ES[id], posa = interpola(def.A, def.B, k); return `<svg viewBox="0 -22 240 222"><line x1="0" y1="${PAV}" x2="240" y2="${PAV}" stroke="#2f3d37" stroke-width="2"/>${def.fronte ? disegnaFronte(def, posa) : disegnaLato(def, posa)}</svg>`; }
   };
